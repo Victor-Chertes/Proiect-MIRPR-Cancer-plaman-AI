@@ -12,11 +12,11 @@ export default function Dropzone({ onFile }) {
     const f = files?.[0]
     if (!f) return
     if (!ACCEPTED.includes(f.type)) {
-      setError('Unsupported format. Use PNG, JPEG, BMP, TIFF or WebP.')
+      setError('Format neacceptat. Folosiți PNG, JPEG, BMP, TIFF sau WebP.')
       return
     }
     if (f.size > MAX_BYTES) {
-      setError('File is larger than 20 MB.')
+      setError('Fișierul depășește 20 MB.')
       return
     }
     setError('')
@@ -60,9 +60,9 @@ export default function Dropzone({ onFile }) {
         </svg>
       </div>
       <p className="drop-title">
-        Drop a CT scan here or <span className="link">browse</span>
+        Trageți imaginea aici sau <span className="link">alegeți un fișier</span>
       </p>
-      <p className="drop-hint">PNG, JPEG, BMP, TIFF or WebP · up to 20 MB</p>
+      <p className="drop-hint">PNG, JPEG, BMP, TIFF sau WebP, maximum 20 MB</p>
       {error && <p className="drop-error">{error}</p>}
     </div>
   )

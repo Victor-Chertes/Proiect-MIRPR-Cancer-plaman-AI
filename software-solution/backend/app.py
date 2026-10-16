@@ -28,13 +28,13 @@ def health():
 def predict():
     file = request.files.get("image")
     if file is None or file.filename == "":
-        return jsonify(error="No image uploaded."), 400
+        return jsonify(error="Nu a fost încărcată nicio imagine."), 400
     if not allowed(file.filename):
-        return jsonify(error="Unsupported file type."), 415
+        return jsonify(error="Format de fișier neacceptat."), 415
 
     data = file.read()
     if not data:
-        return jsonify(error="Uploaded file is empty."), 400
+        return jsonify(error="Fișierul încărcat este gol."), 400
 
     result = model.predict(data)
     return jsonify(
@@ -46,7 +46,7 @@ def predict():
 
 @app.errorhandler(413)
 def too_large(_):
-    return jsonify(error=f"File is larger than {MAX_UPLOAD_MB} MB."), 413
+    return jsonify(error=f"Fișierul depășește {MAX_UPLOAD_MB} MB."), 413
 
 
 # Serve the production build of the frontend if it exists (npm run build).

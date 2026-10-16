@@ -1,1 +1,1 @@
-Technical report, slides and teaser link will be added in the next stages.
+Raportul tehnic, slide-urile și link-ul către teaser vor fi adăugate în etapele următoare.

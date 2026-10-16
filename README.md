@@ -1,36 +1,37 @@
-# PulmoScan: lung cancer detection from CT scans
+# Detecția cancerului pulmonar din imagini CT
 
-MIRPR 2026–2027 project. A web app where a user uploads a chest CT slice and an AI
-model classifies it as **POSITIVE** (signs of a malignant nodule) or **NEGATIVE**.
+Proiect MIRPR 2026–2027. Aplicație web în care utilizatorul încarcă o imagine CT a
+toracelui, iar un model AI o clasifică drept **POZITIV** (semne de nodul malign) sau
+**NEGATIV**.
 
-> **Stage 1 (basic flow):** the full upload → analyze → result flow works end to end.
-> The prediction is hard-coded in `software-solution/backend/model.py` and will be
-> replaced by the trained model in a later stage.
+> **Etapa 1 (flow-ul de bază):** fluxul încărcare → analiză → rezultat funcționează cap
+> la cap. Predicția este hard-codată în `software-solution/backend/model.py` și va fi
+> înlocuită cu modelul antrenat în etapele următoare.
 
-## Team
+## Echipa
 
 - RazvanDard
-- _(add teammates)_
+- _(de completat)_
 
-## How it works
+## Arhitectură
 
 ```
 ┌──────────────┐  POST /api/predict   ┌──────────────┐        ┌──────────────────┐
 │ React (Vite) │ ───────────────────▶ │ Flask API    │ ─────▶ │ model.predict()  │
-│ upload + UI  │ ◀─────────────────── │ validation   │ ◀───── │ (mock for now)   │
+│ încărcare + UI  │ ◀─────────────────── │ validation   │ ◀───── │ (mock deocamdată)   │
 └──────────────┘  {prediction, conf}  └──────────────┘        └──────────────────┘
 ```
 
-## Project layout
+## Structura proiectului
 
 ```
 software-solution/
-  backend/    Flask API (app.py) and the model placeholder (model.py)
-  frontend/   React app (Vite)
-documentation/  report and slides (later stages)
+  backend/    API Flask (app.py) și modelul provizoriu (model.py)
+  frontend/   aplicația React (Vite)
+documentation/  raport și slide-uri (etapele următoare)
 ```
 
-## Running locally
+## Rulare locală
 
 Backend (Python 3.10+):
 
@@ -42,22 +43,22 @@ pip install -r requirements.txt
 python app.py                    # http://127.0.0.1:5000
 ```
 
-Frontend (Node 20+), in a second terminal:
+Frontend (Node 20+), într-un al doilea terminal:
 
 ```bash
 cd software-solution/frontend
 npm install
-npm run dev                      # http://localhost:5173, /api is proxied to Flask
+npm run dev                      # http://localhost:5173, /api e redirecționat către Flask
 ```
 
-To serve everything from Flask instead, run `npm run build` in the frontend folder and
-open http://127.0.0.1:5000.
+Alternativ, rulați `npm run build` în folderul frontend și deschideți
+http://127.0.0.1:5000 (Flask servește și interfața).
 
 ## API
 
-| Method | Path           | Body                         | Response |
+| Metodă | Rută           | Corp cerere                  | Răspuns |
 | :----- | :------------- | :--------------------------- | :------- |
 | GET    | `/api/health`  |                              | `{ status, model }` |
-| POST   | `/api/predict` | `multipart/form-data`, field `image` (PNG/JPEG/BMP/TIFF/WebP, ≤ 20 MB) | `{ prediction, confidence, model, inference_ms, filename, timestamp }` |
+| POST   | `/api/predict` | `multipart/form-data`, câmpul `image` (PNG/JPEG/BMP/TIFF/WebP, ≤ 20 MB) | `{ prediction, model, filename, timestamp }` |
 
-`prediction` is `"POSITIVE"` or `"NEGATIVE"`.
+`prediction` este `"POSITIVE"` sau `"NEGATIVE"`.
