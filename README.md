@@ -25,7 +25,8 @@ biomarker (EGFR, ALK, KRAS, PD-L1). Problema este de clasificare multi-label.
 ## Echipa
 
 - RazvanDard
-- _(de completat)_
+- Victor-Chertes
+- Ciocan-Ionut
 
 ## Arhitectură
 
