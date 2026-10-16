@@ -1,0 +1,251 @@
+%latex model.tex
+%bibtex model
+%latex model.tex
+%latex model.tex
+%pdflatex model.tex
+
+\documentclass[runningheads,a4paper,11pt]{report}
+
+\usepackage{algorithmic}
+\usepackage{algorithm} 
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{caption}
+\usepackage{comment} 
+\usepackage{epsfig} 
+\usepackage{fancyhdr}
+\usepackage[T1]{fontenc}
+\usepackage{geometry} 
+\usepackage{graphicx}
+\usepackage[colorlinks]{hyperref} 
+\usepackage[utf8]{inputenc}
+\usepackage{multicol}
+\usepackage{multirow} 
+\usepackage{rotating}
+\usepackage{setspace}
+\usepackage{subfigure}
+\usepackage{url}
+\usepackage{verbatim}
+\usepackage{xcolor}
+
+\geometry{a4paper,top=3cm,left=2cm,right=2cm,bottom=3cm}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{Identificarea cancerului de plămân}
+\fancyhead[RE,LO]{Numele echipei}
+\fancyfoot[RE,LO]{Proiect 2023-2024}
+\fancyfoot[LE,RO]{\thepage}
+
+\renewcommand{\headrulewidth}{2pt}
+\renewcommand{\footrulewidth}{1pt}
+\renewcommand{\headrule}{\hbox to\headwidth{%
+  \color{lime}\leaders\hrule height \headrulewidth\hfill}}
+\renewcommand{\footrule}{\hbox to\headwidth{%
+  \color{lime}\leaders\hrule height \footrulewidth\hfill}}
+
+\hypersetup{
+pdftitle={Identificarea cancerului de plaman},
+pdfauthor={Chertes Victor, Ionut Constantin Ciocan, Razvan Romulus Costea},
+pdfkeywords={cancer pulmonar, AI, scanari CT, biopsie virtuala, machine learning},
+bookmarksnumbered,
+pdfstartview={FitH},
+urlcolor=cyan,
+colorlinks=true,
+linkcolor=red,
+citecolor=green,
+}
+
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+
+\linespread{1}
+
+\makeindex
+
+\begin{document}
+
+\begin{titlepage}
+\sloppy
+
+\begin{center}
+BABE\c S BOLYAI UNIVERSITY, CLUJ NAPOCA, ROM\^ ANIA
+
+FACULTY OF MATHEMATICS AND COMPUTER SCIENCE
+
+\vspace{6cm}
+
+\Huge \textbf{Identificarea cancerului de plămân}
+
+\vspace{1cm}
+
+\normalsize -- Raport Proiect --
+
+\end{center}
+
+\vspace{5cm}
+
+\begin{flushright}
+\Large{\textbf{Membrii echipei}}\\
+Chertes Victor\\
+Ionuț Constantin Ciocan\\
+Răzvan Romulus Costea
+\end{flushright}
+
+\vspace{4cm}
+
+\begin{center}
+2023-2024
+\end{center}
+
+\end{titlepage}
+
+\pagenumbering{gobble}
+
+\begin{abstract}
+	Dezvoltarea unui sistem inteligent care să ajute medicii în diagnosticarea timpurie a cancerului de plămân. Deși cancerul pulmonar este recunoscut ca fiind cel mai mortal tip de cancer, un prognostic bun și un tratament eficient depind de detectarea timpurie a acestuia. Acest proiect urmărește dezvoltarea unor modele inteligente capabile să analizeze scanările CT și să prezică diferiți biomarkeri tumorali, construind o "biopsie virtuală" care să sprijine radiologii.
+\end{abstract}
+
+
+\tableofcontents
+
+\newpage
+
+\listoftables
+\listoffigures
+\listofalgorithms
+
+\newpage
+
+\setstretch{1.5}
+
+\newpage
+
+\pagenumbering{arabic}
+
+\chapter{Introducere}
+\label{chapter:introducere}
+
+\section{Ideea de bază a proiectului}
+Se dorește dezvoltarea unui sistem inteligent care să ajute medicii în diagnosticarea timpurie a cancerului de plămân folosind scanări CT 3D segmentate, markeri clinici (vârstă, gen) și markeri IHC. Scopul final este construirea unei "biopsii virtuale" care să sprijine radiologii, formulând problema ca un task de clasificare multi-label.
+
+\section{Motivație}
+Povara medicilor poate fi redusă cu ajutorul tehnicilor de AI care sunt esențiale în automatizarea diagnosticului și clasificării bolilor. Diagnosticarea timpurie este critică pentru supraviețuire, iar algoritmii inteligenți pot identifica subtilități în imaginile CT care sunt adesea invizibile ochiului uman.
+
+\chapter{Problema științifică abordată}
+\label{chapter:problema_stiintifica}
+
+\section{Descrierea problemei științifice}
+Problema științifică constă în maparea informațiilor macroscopice (imagini CT/PET) la un nivel microscopic (biomarkeri tumorali și patologie). Formal, dorim să creăm o funcție de mapare $f(x) \rightarrow y$, unde $x$ reprezintă datele multimodale (CT 3D, Vârstă, Gen), iar $y$ reprezintă un set de etichete (clasificare multi-label) corespunzătoare biomarkerilor specifici.
+
+\section{Abstract grafic}
+% \begin{figure}[htbp]
+% 	\centerline{\includegraphics{Fig/abstract_grafic.png}}  
+% 	\caption{Diagrama fluxului aplicației: preluare CT -> preprocesare -> model AI -> predicție biomarkeri.}
+% 	\label{fig:abstract_grafic}
+% \end{figure}
+Aici se va adăuga diagrama care reflectă pașii efectuați în aplicație.
+
+\chapter{Metode existente de rezolvare a problemei (related work)}
+\label{chapter:related_work}
+
+Această secțiune detaliază 6 abordări relevante din literatura de specialitate care tratează detecția cancerului pulmonar, predicția biomarkerilor și integrarea multi-modală[cite: 1].
+
+\section{1. Weakly Supervised Pathology-Informed Representation Learning (Virtual Biopsy)}
+Această lucrare este fundamentală pentru conceptul de "biopsie virtuală", demonstrând cum informațiile celulare microscopice pot fi deduse din imagini radiologice macroscopice[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Studiul a utilizat seturi de date pereche constând în scanări radiologice non-invazive (CT și PET 3D) și imagini histopatologice de înaltă rezoluție (lamele colorate H\&E) obținute din biopsii fizice. Datele au necesitat co-înregistrare spațială pentru a alinia regiunile tumorale de pe CT cu probele de țesut extrase.
+    \item \textbf{Algoritmul cu care s-a lucrat:} S-a utilizat o arhitectură de tip Teacher-Student bazată pe Vision Transformers (ViT) și Knowledge Distillation. Rețeaua "Teacher" a fost antrenată să extragă trăsături complexe din histopatologie. Rețeaua "Student" a fost antrenată exclusiv pe imagini CT/PET, având ca funcție de loss minimizarea diferenței dintre reprezentările sale și cele ale rețelei Teacher. Astfel, modelul a învățat prin supervizare slabă să prezică micro-structuri patologice folosind doar imagini radiologice.
+    \item \textbf{Rezultatele obținute:} Modelul a depășit semnificativ abordările standard (bazate doar pe CT) în predicția subtipurilor tumorale. S-au observat creșteri importante pe metricile de Mean Average Precision (mAP) și Normalized Discounted Cumulative Gain (NDCG), demonstrând capacitatea sa de a capta eterogenitatea intra-tumorală la nivel de voxel.
+    \item \textbf{Librării și Git:} Python, ecosistemul PyTorch, `torchvision` (pentru augmentări) și biblioteci specifice pentru procesarea imaginilor histopatologice (ex. `OpenSlide`). Git: \url{https://github.com/rajat-mae/virtual-biopsy-cbmir}.
+\end{itemize}
+
+\section{2. Enhanced Lung Cancer Survival Prediction Using Semi-Supervised Learning}
+Un studiu excelent care evidențiază integrarea variabilelor heterogene (CT combinat cu date clinice precum vârsta și genul), așa cum este necesar în scopul acestui proiect[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Abordarea a folosit scanări CT și PET specifice cancerului pulmonar, alături de date clinice (Vârstă, Gen, Stadiul tumorii). Pentru a profita de paradigma semi-supervizată, s-au folosit volume masive de date radiologice neetichetate (extrase din baze de date publice precum TCIA) împreună cu datele etichetate ale pacienților.
+    \item \textbf{Algoritmul cu care s-a lucrat:} Procesul a început cu extragerea trăsăturilor radiomice 3D (textură, formă, intensitate). Din cauza dimensionalității ridicate, s-au aplicat tehnici de reducere a dimensionalității prin 3D-Autoencoders (Deep Learning nesupervizat) și Principal Component Analysis (PCA). Ulterior, s-au antrenat algoritmi clasici (Random Forest, K-Nearest Neighbors, Multi-Layer Perceptron) folosind paradigme de Semi-Supervised Learning (ex. pseudo-labeling).
+    \item \textbf{Rezultatele obținute:} Prin integrarea datelor neetichetate și a markerilor clinici, acuratețea medie a predicției de supraviețuire (Overall Survival) a crescut de la un baseline de $\sim 70\%$ (în modelele strict supervizate) la peste $85\%$. Metrica C-index a înregistrat de asemenea o îmbunătățire stabilă.
+    \item \textbf{Librării și Git:} Python, `PySERA` (pentru extragerea trăsăturilor radiomice 3D), `Scikit-Learn` (pentru ML clasic și PCA) și `Keras`/`PyTorch` pentru Autoencodere. Git: \url{https://github.com/MohammadRSalmanpour/Semi-Supervised-approach-for-servival-prediction-in-Lung-cancer-}.
+\end{itemize}
+
+\section{3. Multichannel Deep Learning Prediction of Major Pathological Response}
+Foarte relevant pentru sarcina de "biopsie virtuală", acest studiu folosește AI pentru a prezice patologia celulară pre-tratament strict din imagistica macroscopică pre-tratament[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Scanări CT pre-tratament (fără și cu substanță de contrast) și fișe clinice de la 332 de pacienți cu NSCLC (Non-Small Cell Lung Cancer). Datele au fost multi-centrice pentru a preveni supra-adaptarea la un singur tip de scaner. Imaginile au fost decupate precis în jurul Regiunii de Interes 3D (tumora propriu-zisă).
+    \item \textbf{Algoritmul cu care s-a lucrat:} O arhitectură hibridă complexă denumită "Transformer\_GoogLeNet". Aceasta utilizează module Inception (din GoogLeNet) ca rețea convoluțională pentru a extrage trăsături spațiale locale din patch-urile CT. Aceste trăsături sunt apoi trecute printr-un modul Transformer, care folosește mecanisme de self-attention pentru a înțelege contextul global și relațiile spațiale complexe din interiorul și din jurul tumorii, pe mai multe felii 2D simultan (multi-canal).
+    \item \textbf{Rezultatele obținute:} Modelul hibrid a atins o arie sub curba ROC (AUC) remarcabilă de $0.924$, validând cu succes dacă pacientul va avea un Răspuns Patologic Major (MPR). Modelul a surclasat atât modelele radiomice clasice, cât și CNN-urile standard (precum ResNet sau VGG).
+    \item \textbf{Librării și Git:} Python, `PyTorch` (pentru hibridul personalizat GoogLeNet + Transformer), `Pydicom` (citirea metadatelor) și `SimpleITK` pentru procesarea imaginilor medicale. Nu există un repozitoriu Git public asociat direct cu articolul publicat în PMC.
+\end{itemize}
+
+\section{4. Lung Nodule Detection using YOLO pe LIDC-IDRI}
+Un exemplu practic de procesare a setului principal de date cerut în proiect (LIDC-IDRI), tratând problema ca o sarcină de Detecție de Obiecte adaptată pentru contextul medical[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Baza de date oficială LIDC-IDRI, constând în imagini CT toracice salvate în format DICOM. Setul de date include adnotări XML create de radiologi experți (contururi și coordonate bounding-box pentru noduli cu dimensiuni cuprinse între 3 mm și $>30$ mm). Modelul a operat pe felii 2D extrase din volumele 3D.
+    \item \textbf{Algoritmul cu care s-a lucrat:} Algoritmul YOLO (You Only Look Once) a fost implementat cu un backbone personalizat. Deoarece nodulii pulmonari pot fi extrem de mici, rețeaua a integrat concepte din U-Net și ResNet. Conexiunile de tip skip (skip connections) inspirate din U-Net au ajutat la păstrarea informațiilor spațiale de înaltă rezoluție, asigurând că nodulii mici nu se pierd în straturile adânci.
+    \item \textbf{Rezultatele obținute:} Modelul a obținut un baseline solid de detecție, cu o acuratețe generală de aproximativ $65\%$ pe setul de test. Avantajul major demonstrat a fost viteza de inferență (procesare a feliilor aproape în timp real) și un echilibru puternic între Precizie (evitarea alarmelor false) și Recall (minimizarea nodulilor maligni ratați).
+    \item \textbf{Librării și Git:} Python, `TensorFlow 2.x / Keras` (pentru construirea arhitecturii), `pydicom` (extragerea matricei de pixeli), `NumPy` și `OpenCV`. Git: \url{https://github.com/suhailashakiah/LungNoduleDetection}.
+\end{itemize}
+
+\section{5. Hierarchical Vision Transformer cu Prototypes pentru LIDC-IDRI}
+O abordare de ultimă generație care tratează analiza nodulilor ca pe o problemă "multi-label ordinală", excelentă pentru profilarea biomarkerilor tumorali specifici[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Setul complet LIDC-IDRI 3D CT, concentrându-se profund pe adnotările semantice multi-label furnizate de medici: gradul de malignitate (pe o scară de la 1 la 5), spicularea, calcifierea și subtilitatea. Patch-urile 3D au fost decupate exact în jurul zonelor nodulare confirmate.
+    \item \textbf{Algoritmul cu care s-a lucrat:} Un Hierarchical Vision Transformer (ViT). Deoarece o malignitate de nivel 5 este mai severă decât nivelul 4 (relație ordinală), a fost implementată o funcție de loss ordinală personalizată. Inovația principală a fost arhitectura de "Prototype Reasoning": rețeaua învață "prototipuri" virtuale (ex. "cum arată cel mai clar nodul de gradul 3"). La evaluarea unui pacient nou, modelul clasifică tumora calculând distanța matematică dintre trăsăturile pacientului și prototipurile învățate, oferind astfel interpretabilitate.
+    \item \textbf{Rezultatele obținute:} Arhitectura a obținut rezultate State-of-the-Art pe setul LIDC pentru metrica Within-1-Accuracy (procentul în care modelul a ghicit exact scorul medicului sau a deviat cu maxim 1 punct, ceea ce este acceptabil în practica clinică). AUC-ul pentru clasificarea binară (benign vs. malign) a depășit $0.90$.
+    \item \textbf{Librării și Git:} Python, `PyTorch`, ecosistemul `MONAI` (Medical Open Network for AI), `scikit-image` și instrumente de generare a hărților de atenție. Git reprezentativ: \url{https://github.com/huzisheng/LIDC-IDRI-Vision-Transformer}.
+\end{itemize}
+
+\section{6. Lung Cancer Detection using Segmentation and CNN (LUNA16)}
+Această lucrare descrie perfect etapele tehnice preliminare: cum să transformi un CT brut într-o imagine pulmonară curată, segmentată (scanări 3D segmentate), înainte de predicția markerilor[cite: 1].
+\begin{itemize}
+    \item \textbf{Datele pe care s-a lucrat:} Setul de date public LUNA16, care este un subset rafinat și standardizat din LIDC-IDRI. Acesta exclude scanările cu o grosime a secțiunii mai mare de 2.5 mm, asigurând un set de date omogen, de înaltă rezoluție. Adnotările constau în coordonate 3D precise ale centrelor nodulilor.
+    \item \textbf{Algoritmul cu care s-a lucrat:} Un pipeline în doi pași. Pasul 1 (Segmentare 3D): S-au folosit tehnici clasice de Computer Vision (algoritmi morfologici și Watershed) pentru a separa parenchimul pulmonar de structurile irelevante (oase, patul pacientului, aer exterior). Pasul 2 (Clasificare): Patch-urile pulmonare extrase au fost introduse într-o rețea convoluțională VGG-16. Prin Transfer Learning, rețeaua (pre-antrenată pe ImageNet) a fost ajustată (fine-tuned) în straturile finale pentru a învăța texturile specifice cancerului.
+    \item \textbf{Rezultatele obținute:} Segmentarea inițială a obținut o izolare precisă a plămânilor cu un zgomot de fond minim. CNN-ul VGG16 a extras eficient caracteristicile vizuale esențiale, atingând un nivel ridicat de Sensibilitate (capacitatea de a minimiza Falsele Negative, aspect critic în screening-ul cancerului).
+    \item \textbf{Librării și Git:} Python, `OpenCV` (pentru segmentarea Watershed), `Keras` / `TensorFlow` și `pydicom`. Git: \url{https://github.com/dv-123/Lung_cancer}.
+\end{itemize}
+
+
+\chapter{Metode efectiv folosite pentru rezolvarea problemei}
+\label{chapter:metode_propuse}
+
+Descrierea algoritmilor inteligenți folosiți, a procesului de învățare/optimizare implicat și a metricilor folosite pentru aprecierea calității rezolvării problemei[cite: 1].
+
+
+\chapter{Rezultate experimentale obținute}
+\label{chapter:rezultate_experimentale}
+
+\section{Descrierea seturilor de date folosite}
+Sursele de date (ex. LIDC-IDRI), clasificarea și tipologia acestora[cite: 1].
+
+\section{Metodologia experimentală}
+Întrebările specifice la care experimentele își propun să răspundă și parametrii algoritmilor aplicați[cite: 1].
+
+\section{Rezultatele obținute}
+Metricile de performanță calculate în urma aplicării algoritmilor inteligenți[cite: 1].
+
+\section{Analiza statistică}
+Validarea statistică a rezultatelor obținute și diverse studii de ablație[cite: 1].
+
+
+\chapter{Concluzii și posibile îmbunătățiri}
+\label{chapter:concluzii}
+
+Sinteza punctelor forte și a punctelor slabe ale metodei propuse, împreună cu direcțiile viitoare de cercetare[cite: 1].
+
+
+\renewcommand\bibname{Referințe}
+\begin{thebibliography}{9}
+
+\bibitem{rajat} 
+Rajat et al., \textit{Weakly Supervised Pathology-Informed Representation Learning}, \url{https://github.com/rajat-mae/virtual-biopsy-cbmir}.
+
+\bibitem{salmanpour} 
+Salmanpour, M. R., et al., \textit{Enhanced Lung Cancer Survival Prediction Using Semi-Supervised Learning}, \url{https://github.com/MohammadRSalmanpour/Semi-Supervised-approach-for-servival-prediction-in-Lung-cancer-}.
+
+\end{thebibliography}
+
+\end{document}
