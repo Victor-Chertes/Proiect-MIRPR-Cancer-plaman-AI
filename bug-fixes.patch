@@ -1,0 +1,1402 @@
+diff --git a/README.md b/README.md
+index 9e4df34..0e0ef8c 100644
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,26 @@
+ # Detecția cancerului pulmonar din imagini CT
+ 
+-Proiect MIRPR 2026–2027. Aplicație web în care utilizatorul încarcă o imagine CT a
+-toracelui, iar un model AI o clasifică drept **POZITIV** (semne de nodul malign) sau
+-**NEGATIV**.
++Proiect MIRPR 2026–2027. „Biopsie virtuală”: aplicație web în care medicul încarcă o
++scanare CT a toracelui (volum NIfTI, DICOM sau o felie 2D) împreună cu vârsta și sexul
++pacientului, iar un model AI estimează probabilitatea ca tumora să exprime fiecare
++biomarker (EGFR, ALK, KRAS, PD-L1). Problema este de clasificare multi-label.
+ 
+ > **Etapa 1 (flow-ul de bază):** fluxul încărcare → analiză → rezultat funcționează cap
+-> la cap. Predicția este hard-codată în `software-solution/backend/model.py` și va fi
+-> înlocuită cu modelul antrenat în etapele următoare.
++> la cap. Predicția este hard-codată în `software-solution/backend/model.py`
++> (`predict(volum, vârstă, sex)`) și va fi înlocuită cu modelul antrenat în etapele
++> următoare, fără alte modificări în API sau interfață.
++
++## Funcționalități
++
++- încărcare scanare CT (NIfTI `.nii` / `.nii.gz`, DICOM `.dcm`, PNG/JPEG/…) sau caz demo
++  (volum CT sintetic cu nodul și mască de segmentare, generat în browser);
++- date clinice: cod pacient (opțional), vârstă, sex;
++- vizualizare volum: planuri axial / coronal / sagital, navigare prin felii (slider sau
++  rotița mouse-ului), ferestre pulmonar / mediastin, suprapunerea măștii de segmentare
++  (încărcată ca NIfTI separat);
++- rezultate per biomarker: probabilitate, prag de decizie, pozitiv/negativ;
++- export raport JSON și PDF (din dialogul de printare);
++- istoric al analizelor din sesiunea curentă.
+ 
+ ## Echipa
+ 
+@@ -18,8 +32,8 @@ toracelui, iar un model AI o clasifică drept **POZITIV** (semne de nodul malign
+ ```
+ ┌──────────────┐  POST /api/predict   ┌──────────────┐        ┌──────────────────┐
+ │ React (Vite) │ ───────────────────▶ │ Flask API    │ ─────▶ │ model.predict()  │
+-│ încărcare + UI  │ ◀─────────────────── │ validation   │ ◀───── │ (mock deocamdată)   │
+-└──────────────┘  {prediction, conf}  └──────────────┘        └──────────────────┘
++│ CT + vârstă, sex│ ◀─────────────────── │ validation   │ ◀───── │ (mock deocamdată)   │
++└──────────────┘  {biomarkers[]}    └──────────────┘        └──────────────────┘
+ ```
+ 
+ ## Structura proiectului
+@@ -59,6 +73,6 @@ http://127.0.0.1:5000 (Flask servește și interfața).
+ | Metodă | Rută           | Corp cerere                  | Răspuns |
+ | :----- | :------------- | :--------------------------- | :------- |
+ | GET    | `/api/health`  |                              | `{ status, model }` |
+-| POST   | `/api/predict` | `multipart/form-data`, câmpul `image` (PNG/JPEG/BMP/TIFF/WebP, ≤ 20 MB) | `{ prediction, model, filename, timestamp }` |
++| POST   | `/api/predict` | `multipart/form-data`: `scan` (NIfTI/DICOM/imagine, ≤ 200 MB), `age` (0–120), `sex` (`M`/`F`) | `{ biomarkers, patient, model, filename, timestamp }` |
+ 
+-`prediction` este `"POSITIVE"` sau `"NEGATIVE"`.
++`biomarkers` este o listă de `{ name, description, probability, threshold, positive }`.
+diff --git a/software-solution/backend/app.py b/software-solution/backend/app.py
+index 0d120a1..e5a571f 100644
+--- a/software-solution/backend/app.py
++++ b/software-solution/backend/app.py
+@@ -7,8 +7,10 @@ from flask import Flask, jsonify, request, send_from_directory
+ 
+ import model
+ 
+-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"}
+-MAX_UPLOAD_MB = 20
++# 2D slices, NIfTI volumes (.nii / .nii.gz) and DICOM files.
++ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "nii", "gz", "dcm"}
++SEXES = {"M", "F"}
++MAX_UPLOAD_MB = 200
+ FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+ 
+ app = Flask(__name__, static_folder=None)
+@@ -16,7 +18,18 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+ 
+ 
+ def allowed(filename: str) -> bool:
+-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
++    name = filename.lower()
++    if name.endswith(".gz"):
++        return name.endswith(".nii.gz")
++    return "." in name and name.rsplit(".", 1)[1] in ALLOWED_EXTENSIONS
++
++
++def parse_age(value):
++    try:
++        age = int(value)
++    except (TypeError, ValueError):
++        return None
++    return age if 0 <= age <= 120 else None
+ 
+ 
+ @app.get("/api/health")
+@@ -26,19 +39,27 @@ def health():
+ 
+ @app.post("/api/predict")
+ def predict():
+-    file = request.files.get("image")
++    file = request.files.get("scan")
+     if file is None or file.filename == "":
+-        return jsonify(error="Nu a fost încărcată nicio imagine."), 400
++        return jsonify(error="Nu a fost încărcată nicio scanare."), 400
+     if not allowed(file.filename):
+         return jsonify(error="Format de fișier neacceptat."), 415
+ 
++    age = parse_age(request.form.get("age"))
++    if age is None:
++        return jsonify(error="Vârsta trebuie să fie un număr între 0 și 120."), 400
++    sex = request.form.get("sex", "").upper()
++    if sex not in SEXES:
++        return jsonify(error="Sexul trebuie să fie M sau F."), 400
++
+     data = file.read()
+     if not data:
+         return jsonify(error="Fișierul încărcat este gol."), 400
+ 
+-    result = model.predict(data)
++    result = model.predict(data, age, sex)
+     return jsonify(
+         filename=file.filename,
++        patient={"age": age, "sex": sex},
+         timestamp=datetime.now(timezone.utc).isoformat(),
+         **result,
+     )
+diff --git a/software-solution/backend/model.py b/software-solution/backend/model.py
+index f8a393d..66adb84 100644
+--- a/software-solution/backend/model.py
++++ b/software-solution/backend/model.py
+@@ -1,19 +1,42 @@
+-"""Placeholder for the lung cancer classifier.
++"""Placeholder for the biomarker classifier ("virtual biopsy").
+ 
+-The real model will be trained in the next stages of the project. Until then
+-`predict` returns a hard-coded POSITIVE/NEGATIVE result. The label is derived
+-from the image hash so the same scan always gets the same answer, which keeps
+-demos reproducible.
++The real model (3D CNN on the segmented CT volume, fused with age and sex) will
++be trained in the next stages of the project. Until then `predict` returns the
++hard-coded probabilities from the project report. The signature already takes
++the inputs of the final model, so the real one can replace it without changes
++to the API or the frontend.
+ """
+ 
+-import hashlib
+ import time
+ 
+-MODEL_NAME = "mock-v0"
+-LABELS = ("NEGATIVE", "POSITIVE")
++MODEL_NAME = "mock-v1"
+ 
++# name, description, probability (hard-coded), decision threshold
++BIOMARKERS = (
++    ("EGFR", "Mutație EGFR", 0.82, 0.5),
++    ("ALK", "Rearanjare ALK", 0.12, 0.5),
++    ("KRAS", "Mutație KRAS", 0.35, 0.5),
++    ("PD-L1", "Expresie PD-L1", 0.67, 0.5),
++)
+ 
+-def predict(image_bytes: bytes) -> dict:
+-    time.sleep(0.8)  # simulate inference latency so the UI flow is realistic
+-    digest = hashlib.sha256(image_bytes).digest()
+-    return {"prediction": LABELS[digest[0] % 2], "model": MODEL_NAME}
++
++def predict(volume: bytes, age: int, sex: str) -> dict:
++    """Return the probability that each biomarker is positive.
++
++    volume: the uploaded CT file (NIfTI, DICOM or a 2D slice), unparsed.
++    age: patient age in years. sex: "M" or "F".
++    """
++    time.sleep(1.5)  # simulate inference latency so the UI flow is realistic
++    return {
++        "model": MODEL_NAME,
++        "biomarkers": [
++            {
++                "name": name,
++                "description": description,
++                "probability": probability,
++                "threshold": threshold,
++                "positive": probability >= threshold,
++            }
++            for name, description, probability, threshold in BIOMARKERS
++        ],
++    }
+diff --git a/software-solution/frontend/src/App.jsx b/software-solution/frontend/src/App.jsx
+index 81f4d68..88f46f9 100644
+--- a/software-solution/frontend/src/App.jsx
++++ b/software-solution/frontend/src/App.jsx
+@@ -1,33 +1,78 @@
+ import { useState } from 'react'
+ import { predict } from './api.js'
++import { scanKind } from './format.js'
++import { demoCase, readNifti } from './volume.js'
+ import Viewport from './components/Viewport.jsx'
+ import Report from './components/Report.jsx'
+ import History from './components/History.jsx'
+ 
++const NO_PATIENT = { id: '', age: '', sex: '' }
++
+ export default function App() {
+-  const [scan, setScan] = useState(null) // { file, url, width, height, loadedAt }
++  // { file, kind: image | volume | dicom, url?, volume?, mask?, focus?, width?, height?, loadedAt }
++  const [scan, setScan] = useState(null)
++  const [reading, setReading] = useState(false)
++  const [scanError, setScanError] = useState('')
++  const [patient, setPatient] = useState(NO_PATIENT)
+   const [status, setStatus] = useState('idle') // idle | loading | done | error
+   const [result, setResult] = useState(null)
+   const [error, setError] = useState('')
+   const [history, setHistory] = useState([])
+ 
+-  function selectFile(file) {
++  function show(next) {
+     // Free the previous preview unless the history list still shows it.
+-    if (scan && !history.some((h) => h.thumb === scan.url)) URL.revokeObjectURL(scan.url)
+-    setScan({ file, url: URL.createObjectURL(file), loadedAt: new Date() })
++    if (scan?.url && !history.some((h) => h.thumb === scan.url)) URL.revokeObjectURL(scan.url)
++    setScan({ ...next, loadedAt: new Date() })
+     setResult(null)
+     setError('')
+     setStatus('idle')
+   }
+ 
++  async function selectFile(file) {
++    setScanError('')
++    const kind = scanKind(file.name)
++    if (kind === 'volume') {
++      setReading(true)
++      try {
++        show({ file, kind, volume: await readNifti(file) })
++      } catch (e) {
++        setScanError(e.message)
++      } finally {
++        setReading(false)
++      }
++    } else {
++      show({ file, kind, url: kind === 'image' ? URL.createObjectURL(file) : null })
++    }
++  }
++
++  function loadDemo() {
++    setScanError('')
++    show({ kind: 'volume', ...demoCase(), demo: true })
++    setPatient({ id: 'DEMO-001', age: '64', sex: 'M' })
++  }
++
++  async function loadMask(file) {
++    setScanError('')
++    try {
++      const mask = await readNifti(file)
++      if (mask.dims.join() !== scan.volume.dims.join()) {
++        throw new Error(`Masca are dimensiunile ${mask.dims.join('×')}, volumul ${scan.volume.dims.join('×')}.`)
++      }
++      setScan((s) => ({ ...s, mask: mask.data, maskName: file.name }))
++    } catch (e) {
++      setScanError(e.message)
++    }
++  }
++
+   async function analyze() {
+     setStatus('loading')
+     setError('')
+     try {
+-      const data = await predict(scan.file)
+-      setResult(data)
++      const data = await predict(scan.file, patient)
++      const entry = { ...data, patientId: patient.id, thumb: scan.url, id: crypto.randomUUID() }
++      setResult(entry)
+       setStatus('done')
+-      setHistory((h) => [{ ...data, thumb: scan.url, id: crypto.randomUUID() }, ...h].slice(0, 8))
++      setHistory((h) => [entry, ...h].slice(0, 8))
+     } catch (e) {
+       setError(e.message === 'Failed to fetch' ? 'Serverul nu răspunde. Verificați că backend-ul Flask rulează.' : e.message)
+       setStatus('error')
+@@ -37,7 +82,7 @@ export default function App() {
+   return (
+     <div className="app">
+       <header className="bar">
+-        <span className="bar-title">Detecție cancer pulmonar</span>
++        <span className="bar-title">Biopsie virtuală · cancer pulmonar</span>
+         <span className="bar-note">Model provizoriu · rezultatele sunt simulate</span>
+       </header>
+ 
+@@ -45,11 +90,17 @@ export default function App() {
+         <Viewport
+           scan={scan}
+           busy={status === 'loading'}
++          reading={reading}
++          error={scanError}
+           onFile={selectFile}
++          onDemo={loadDemo}
++          onMask={loadMask}
+           onMeasure={(width, height) => setScan((s) => ({ ...s, width, height }))}
+         />
+         <Report
+           scan={scan}
++          patient={patient}
++          onPatient={setPatient}
+           status={status}
+           result={result}
+           error={error}
+@@ -61,8 +112,8 @@ export default function App() {
+       <History items={history} />
+ 
+       <footer className="foot">
+-        Prototip de cercetare (MIRPR 2026–2027). Rezultatul nu reprezintă un diagnostic medical și
+-        trebuie interpretat de un medic radiolog.
++        Prototip de cercetare (MIRPR 2026–2027). Rezultatul este orientativ, nu înlocuiește biopsia și
++        trebuie interpretat de un medic specialist.
+       </footer>
+     </div>
+   )
+diff --git a/software-solution/frontend/src/api.js b/software-solution/frontend/src/api.js
+index 426b633..dc95e39 100644
+--- a/software-solution/frontend/src/api.js
++++ b/software-solution/frontend/src/api.js
+@@ -1,9 +1,11 @@
+ // Thin client for the Flask backend. In development Vite proxies /api to it.
+ const API_BASE = import.meta.env.VITE_API_URL ?? ''
+ 
+-export async function predict(file) {
++export async function predict(file, { age, sex }) {
+   const body = new FormData()
+-  body.append('image', file)
++  body.append('scan', file)
++  body.append('age', String(age))
++  body.append('sex', sex)
+ 
+   const res = await fetch(`${API_BASE}/api/predict`, { method: 'POST', body })
+   const data = await res.json().catch(() => ({}))
+diff --git a/software-solution/frontend/src/components/History.jsx b/software-solution/frontend/src/components/History.jsx
+index 004b935..efba825 100644
+--- a/software-solution/frontend/src/components/History.jsx
++++ b/software-solution/frontend/src/components/History.jsx
+@@ -1,4 +1,4 @@
+-import { LABELS, formatTime } from '../format.js'
++import { formatTime } from '../format.js'
+ 
+ export default function History({ items }) {
+   return (
+@@ -12,22 +12,30 @@ export default function History({ items }) {
+             <thead>
+               <tr>
+                 <th>Ora</th>
++                <th>Pacient</th>
+                 <th>Fișier</th>
+-                <th>Rezultat</th>
++                <th>Biomarkeri pozitivi</th>
+               </tr>
+             </thead>
+             <tbody>
+               {items.map((item) => (
+                 <tr key={item.id}>
+                   <td className="mono">{formatTime(item.timestamp)}</td>
++                  <td className="mono">
++                    {[item.patientId, `${item.patient.age} ani`, item.patient.sex].filter(Boolean).join(' · ')}
++                  </td>
+                   <td className="file-cell">
+                     <div>
+-                      <img src={item.thumb} alt="" />
++                      {item.thumb ? <img src={item.thumb} alt="" /> : <span className="thumb-3d">CT</span>}
+                       <span title={item.filename}>{item.filename}</span>
+                     </div>
+                   </td>
+-                  <td>
+-                    <span className={`chip ${item.prediction.toLowerCase()}`}>{LABELS[item.prediction]}</span>
++                  <td className="chips">
++                    {item.biomarkers.some((b) => b.positive)
++                      ? item.biomarkers.filter((b) => b.positive).map((b) => (
++                          <span key={b.name} className="chip positive">{b.name}</span>
++                        ))
++                      : <span className="chip negative">Niciunul</span>}
+                   </td>
+                 </tr>
+               ))}
+diff --git a/software-solution/frontend/src/components/Report.jsx b/software-solution/frontend/src/components/Report.jsx
+index e8a1f7f..9b3a59c 100644
+--- a/software-solution/frontend/src/components/Report.jsx
++++ b/software-solution/frontend/src/components/Report.jsx
+@@ -1,14 +1,16 @@
+ import { useRef } from 'react'
+-import { ACCEPTED, LABELS, formatSize, validate } from '../format.js'
++import { ACCEPT, SEXES, clinicalProblem, formatPercent, formatSize, validate } from '../format.js'
+ 
+-const CONCLUSION = {
+-  POSITIVE: 'Aspect sugestiv pentru un nodul pulmonar malign. Se recomandă evaluare suplimentară de către un specialist.',
+-  NEGATIVE: 'Nu au fost identificate leziuni cu aspect malign pe imaginea analizată.',
+-}
++const KIND = { volume: 'Volum CT 3D (NIfTI)', dicom: 'CT (DICOM)', image: 'Felie CT 2D' }
++const DISCLAIMER = 'Rezultat orientativ, generat automat. Nu înlocuiește biopsia și trebuie interpretat de un medic specialist.'
+ 
+-export default function Report({ scan, status, result, error, onAnalyze, onReplace }) {
++export default function Report({ scan, patient, onPatient, status, result, error, onAnalyze, onReplace }) {
+   const input = useRef(null)
+   const busy = status === 'loading'
++  const problem = clinicalProblem(patient)
++  const stale =
++    result && (String(result.patient.age) !== patient.age || result.patient.sex !== patient.sex || result.patientId !== patient.id)
++  const set = (field) => (e) => onPatient({ ...patient, [field]: e.target.value })
+ 
+   return (
+     <section className="report" aria-label="Raport">
+@@ -17,60 +19,118 @@ export default function Report({ scan, status, result, error, onAnalyze, onRepla
+       <dl className="fields">
+         <div>
+           <dt>Investigație</dt>
+-          <dd>CT toracic, felie axială</dd>
++          <dd>{scan ? KIND[scan.kind] : 'CT toracic'}</dd>
+         </div>
+         <div>
+           <dt>Fișier</dt>
+           <dd className="mono" title={scan?.file.name}>{scan ? scan.file.name : '—'}</dd>
+         </div>
+         <div>
+-          <dt>Rezoluție</dt>
+-          <dd className="mono">{scan?.width ? `${scan.width} × ${scan.height} px` : '—'}</dd>
++          <dt>Dimensiuni</dt>
++          <dd className="mono">
++            {scan?.volume ? scan.volume.dims.join(' × ') : scan?.width ? `${scan.width} × ${scan.height} px` : '—'}
++          </dd>
+         </div>
+         <div>
+-          <dt>Dimensiune</dt>
++          <dt>Mărime</dt>
+           <dd className="mono">{scan ? formatSize(scan.file.size) : '—'}</dd>
+         </div>
+       </dl>
+ 
+-      <div className={`conclusion ${result ? result.prediction.toLowerCase() : ''}`}>
+-        <h3>Concluzie</h3>
+-        {status === 'done' && result ? (
+-          <>
+-            <p className="verdict">{LABELS[result.prediction]}</p>
+-            <p className="verdict-text">{CONCLUSION[result.prediction]}</p>
+-          </>
++      <fieldset className="patient" disabled={busy}>
++        <legend>Date clinice</legend>
++        <label className="field wide">
++          <span>Cod pacient <em>(opțional)</em></span>
++          <input value={patient.id} onChange={set('id')} placeholder="ex. P-0142" maxLength={32} autoComplete="off" />
++        </label>
++        <label className="field">
++          <span>Vârstă (ani)</span>
++          <input type="number" inputMode="numeric" min="0" max="120" step="1" value={patient.age} onChange={set('age')} required />
++        </label>
++        <div className="field" role="radiogroup" aria-label="Sex">
++          <span>Sex</span>
++          <div className="segmented light">
++            {Object.entries(SEXES).map(([key, label]) => (
++              <button
++                key={key}
++                type="button"
++                role="radio"
++                aria-checked={patient.sex === key}
++                className={patient.sex === key ? 'on' : ''}
++                onClick={() => onPatient({ ...patient, sex: key })}
++              >
++                {label}
++              </button>
++            ))}
++          </div>
++        </div>
++      </fieldset>
++
++      <div className="conclusion">
++        <h3>Biomarkeri</h3>
++        {busy ? (
++          <div className="progress" role="status">
++            <div className="progress-bar"><span /></div>
++            <p className="pending">Se rulează modelul pe volum și datele clinice…</p>
++          </div>
+         ) : status === 'error' ? (
+           <p className="error" role="alert">{error}</p>
+-        ) : busy ? (
+-          <p className="pending">Se analizează imaginea…</p>
++        ) : status === 'done' && result ? (
++          <>
++            <ul className="markers">
++              {result.biomarkers.map((b) => (
++                <li key={b.name} className={b.positive ? 'positive' : 'negative'}>
++                  <div className="marker-head">
++                    <span className="marker-name">{b.name}</span>
++                    <span className="mono">{formatPercent(b.probability)}</span>
++                    <span className={`chip ${b.positive ? 'positive' : 'negative'}`}>{b.positive ? 'Pozitiv' : 'Negativ'}</span>
++                  </div>
++                  <div className="meter" title={`Prag de decizie: ${formatPercent(b.threshold)}`}>
++                    <span className="meter-fill" style={{ width: formatPercent(b.probability) }} />
++                    <span className="meter-threshold" style={{ left: formatPercent(b.threshold) }} />
++                  </div>
++                  <span className="marker-desc">{b.description}</span>
++                </li>
++              ))}
++            </ul>
++            {stale && <p className="warn">Datele clinice s-au modificat. Rulați din nou analiza.</p>}
++            <p className="disclaimer">{DISCLAIMER}</p>
++          </>
+         ) : (
+-          <p className="pending">{scan ? 'Imaginea este pregătită pentru analiză.' : 'Încărcați o imagine pentru a începe.'}</p>
++          <p className="pending">
++            {!scan ? 'Încărcați o scanare sau deschideți cazul demo.' : problem || 'Gata pentru analiză.'}
++          </p>
+         )}
+       </div>
+ 
+       <div className="report-actions">
+-        {status === 'done' ? (
+-          <button className="btn primary" onClick={() => input.current?.click()}>
+-            Analizează altă imagine
++        <button className="btn primary" onClick={onAnalyze} disabled={!scan || busy || !!problem}>
++          {busy ? (
++            <>
++              <span className="spinner" aria-hidden="true" /> Se analizează…
++            </>
++          ) : status === 'done' ? (
++            'Rulează din nou analiza'
++          ) : (
++            'Rulează analiza'
++          )}
++        </button>
++        {scan && (
++          <button className="btn" onClick={() => input.current?.click()} disabled={busy}>
++            Altă scanare
+           </button>
+-        ) : (
+-          <>
+-            <button className="btn primary" onClick={onAnalyze} disabled={!scan || busy}>
+-              {busy ? 'Se analizează…' : 'Analizează imaginea'}
+-            </button>
+-            {scan && (
+-              <button className="btn" onClick={() => input.current?.click()} disabled={busy}>
+-                Altă imagine
+-              </button>
+-            )}
+-          </>
++        )}
++        {status === 'done' && result && (
++          <div className="export">
++            <button className="btn" onClick={() => downloadJson(result, scan)}>Export JSON</button>
++            <button className="btn" onClick={() => window.print()}>Export PDF</button>
++          </div>
+         )}
+         <input
+           ref={input}
+           id="replace-file"
+           type="file"
+-          accept={ACCEPTED.join(',')}
++          accept={ACCEPT}
+           hidden
+           onChange={(e) => {
+             const f = e.target.files?.[0]
+@@ -82,3 +142,25 @@ export default function Report({ scan, status, result, error, onAnalyze, onRepla
+     </section>
+   )
+ }
++
++function downloadJson(result, scan) {
++  const report = {
++    generated: result.timestamp,
++    model: result.model,
++    patient: { id: result.patientId || null, age: result.patient.age, sex: result.patient.sex },
++    scan: {
++      filename: result.filename,
++      type: scan.kind,
++      dims: scan.volume?.dims ?? (scan.width ? [scan.width, scan.height] : null),
++      spacing_mm: scan.volume?.spacing ?? null,
++    },
++    biomarkers: result.biomarkers,
++    disclaimer: DISCLAIMER,
++  }
++  const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }))
++  const a = document.createElement('a')
++  a.href = url
++  a.download = `raport-${result.patientId || 'pacient'}-${result.timestamp.slice(0, 10)}.json`
++  a.click()
++  URL.revokeObjectURL(url)
++}
+diff --git a/software-solution/frontend/src/components/Viewport.jsx b/software-solution/frontend/src/components/Viewport.jsx
+index 846ab9b..5a102f8 100644
+--- a/software-solution/frontend/src/components/Viewport.jsx
++++ b/software-solution/frontend/src/components/Viewport.jsx
+@@ -1,23 +1,27 @@
+ import { useRef, useState } from 'react'
+-import { ACCEPTED, validate, formatSize, formatDate, formatTime } from '../format.js'
++import { ACCEPT, validate, formatSize, formatDate, formatTime } from '../format.js'
++import VolumeView from './VolumeView.jsx'
+ 
+-export default function Viewport({ scan, busy, onFile, onMeasure }) {
++export default function Viewport({ scan, busy, reading, error, onFile, onDemo, onMask, onMeasure }) {
+   const input = useRef(null)
+   const [dragging, setDragging] = useState(false)
+-  const [error, setError] = useState('')
++  const [problem, setProblem] = useState('')
+ 
+   function take(files) {
+     const f = files?.[0]
+     if (!f) return
+-    const problem = validate(f)
+-    setError(problem)
+-    if (!problem) onFile(f)
++    const p = validate(f)
++    setProblem(p)
++    if (!p) onFile(f)
+   }
+ 
++  const shownError = problem || error
++
+   return (
+     <section
+       className={`viewport ${dragging ? 'dragging' : ''} ${scan ? 'has-scan' : ''}`}
+       aria-label="Imagine CT"
++      aria-busy={busy || reading}
+       onDragOver={(e) => {
+         e.preventDefault()
+         if (!busy) setDragging(true)
+@@ -33,7 +37,7 @@ export default function Viewport({ scan, busy, onFile, onMeasure }) {
+         ref={input}
+         id="scan-file"
+         type="file"
+-        accept={ACCEPTED.join(',')}
++        accept={ACCEPT}
+         hidden
+         onChange={(e) => {
+           take(e.target.files)
+@@ -41,30 +45,61 @@ export default function Viewport({ scan, busy, onFile, onMeasure }) {
+         }}
+       />
+ 
+-      {scan ? (
++      {reading ? (
++        <div className="empty">
++          <span className="spinner large" aria-hidden="true" />
++          <p className="empty-title">Se citește volumul…</p>
++        </div>
++      ) : scan ? (
+         <>
+-          <img
+-            src={scan.url}
+-            alt={`Imagine CT: ${scan.file.name}`}
+-            onLoad={(e) => onMeasure(e.target.naturalWidth, e.target.naturalHeight)}
+-          />
+-          <div className="overlay tl">{scan.file.name}</div>
+-          <div className="overlay tr">{scan.width ? `${scan.width} × ${scan.height} px` : ''}</div>
+-          <div className="overlay bl">{formatSize(scan.file.size)}</div>
+-          <div className="overlay br">
+-            {formatDate(scan.loadedAt)} {formatTime(scan.loadedAt)}
+-          </div>
+-          {busy && <div className="sweep" aria-hidden="true" />}
++          {scan.kind === 'volume' ? (
++            <VolumeView key={scan.loadedAt.getTime()} scan={scan} busy={busy} onMask={onMask} />
++          ) : scan.kind === 'image' ? (
++            <img
++              src={scan.url}
++              alt={`Imagine CT: ${scan.file.name}`}
++              onLoad={(e) => onMeasure(e.target.naturalWidth, e.target.naturalHeight)}
++            />
++          ) : (
++            <div className="empty">
++              <p className="empty-title">Fișier DICOM încărcat</p>
++              <p className="empty-hint">Previzualizarea DICOM nu este încă disponibilă. Analiza poate fi rulată.</p>
++            </div>
++          )}
++          {scan.kind !== 'volume' && (
++            <>
++              <div className="overlay tl">{scan.file.name}</div>
++              <div className="overlay tr">{scan.width ? `${scan.width} × ${scan.height} px` : ''}</div>
++              <div className="overlay bl">{formatSize(scan.file.size)}</div>
++              <div className="overlay br">
++                {formatDate(scan.loadedAt)} {formatTime(scan.loadedAt)}
++              </div>
++            </>
++          )}
++          {shownError && <p className="viewport-error" role="alert">{shownError}</p>}
++          {busy && (
++            <div className="scanning" aria-hidden="true">
++              <div className="sweep" />
++              <div className="scanning-label">
++                <span className="spinner" /> Analiză în curs
++              </div>
++            </div>
++          )}
+         </>
+       ) : (
+         <div className="empty">
+           <Crosshair />
+-          <p className="empty-title">Trageți aici o imagine CT</p>
+-          <p className="empty-hint">o felie axială a toracelui, PNG, JPEG, BMP, TIFF sau WebP, max. 20 MB</p>
+-          <button className="btn on-dark" onClick={() => input.current?.click()}>
+-            Alegeți un fișier
+-          </button>
+-          {error && <p className="empty-error" role="alert">{error}</p>}
++          <p className="empty-title">Trageți aici o scanare CT</p>
++          <p className="empty-hint">volum NIfTI (.nii, .nii.gz), fișier DICOM sau o felie axială ca imagine, max. 200 MB</p>
++          <div className="empty-actions">
++            <button className="btn on-dark" onClick={() => input.current?.click()}>
++              Alegeți un fișier
++            </button>
++            <button className="btn on-dark" onClick={onDemo}>
++              Caz demo
++            </button>
++          </div>
++          {shownError && <p className="empty-error" role="alert">{shownError}</p>}
+         </div>
+       )}
+     </section>
+diff --git a/software-solution/frontend/src/components/VolumeView.jsx b/software-solution/frontend/src/components/VolumeView.jsx
+new file mode 100644
+index 0000000..8ee8a58
+--- /dev/null
++++ b/software-solution/frontend/src/components/VolumeView.jsx
+@@ -0,0 +1,114 @@
++import { useEffect, useRef, useState } from 'react'
++import { PLANES, WINDOWS, looksLikeHU, renderSlice, sliceShape } from '../volume.js'
++
++// Slice viewer for a 3D volume: plane switch, slice slider (or mouse wheel),
++// display window and the segmentation mask overlay.
++export default function VolumeView({ scan, busy, onMask }) {
++  const { volume, mask, focus } = scan
++  const canvas = useRef(null)
++  const maskInput = useRef(null)
++  const [plane, setPlane] = useState('axial')
++  const [win, setWin] = useState(looksLikeHU(volume) ? 'lung' : 'auto')
++  const [showMask, setShowMask] = useState(true)
++  const [index, setIndex] = useState(() => {
++    const [nx, ny, nz] = volume.dims
++    const center = focus ?? { x: nx >> 1, y: ny >> 1, z: nz >> 1 }
++    return { sagittal: center.x, coronal: center.y, axial: center.z }
++  })
++
++  const count = volume.dims[PLANES[plane].axis]
++  const current = Math.min(index[plane], count - 1)
++  const shape = sliceShape(volume, plane)
++
++  useEffect(() => {
++    // Draw at voxel resolution, then stretch to physical proportions (voxels are
++    // often not cubic, e.g. 0.7 × 0.7 × 2.5 mm).
++    const src = document.createElement('canvas')
++    src.width = shape.cols
++    src.height = shape.rows
++    src.getContext('2d').putImageData(renderSlice(volume, mask, plane, current, WINDOWS[win], showMask), 0, 0)
++    const c = canvas.current
++    const scale = Math.max(1, Math.ceil(512 / Math.max(shape.cols, shape.rows)))
++    c.width = shape.cols * scale
++    c.height = Math.round((shape.cols * scale) / shape.aspect)
++    const ctx = c.getContext('2d')
++    ctx.imageSmoothingEnabled = false
++    ctx.drawImage(src, 0, 0, c.width, c.height)
++  }, [volume, mask, plane, current, win, showMask, shape.cols, shape.rows, shape.aspect])
++
++  // React registers wheel listeners as passive, so preventDefault needs a native one.
++  useEffect(() => {
++    const c = canvas.current
++    const onWheel = (e) => {
++      e.preventDefault()
++      const delta = e.deltaY > 0 ? 1 : -1
++      setIndex((ix) => ({ ...ix, [plane]: Math.max(0, Math.min(count - 1, ix[plane] + delta)) }))
++    }
++    c.addEventListener('wheel', onWheel, { passive: false })
++    return () => c.removeEventListener('wheel', onWheel)
++  }, [plane, count])
++
++  return (
++    <div className="volume">
++      <div className="volume-tools">
++        <div className="segmented" role="group" aria-label="Plan">
++          {Object.entries(PLANES).map(([key, p]) => (
++            <button key={key} className={key === plane ? 'on' : ''} aria-pressed={key === plane} onClick={() => setPlane(key)}>
++              {p.label}
++            </button>
++          ))}
++        </div>
++        <label className="tool">
++          Fereastră
++          <select value={win} onChange={(e) => setWin(e.target.value)}>
++            {Object.entries(WINDOWS).map(([key, w]) => (
++              <option key={key} value={key}>{w.label}</option>
++            ))}
++          </select>
++        </label>
++        {mask ? (
++          <label className="tool">
++            <input type="checkbox" checked={showMask} onChange={(e) => setShowMask(e.target.checked)} />
++            Mască tumoră
++          </label>
++        ) : (
++          <button className="tool link" onClick={() => maskInput.current?.click()} disabled={busy}>
++            Încarcă mască
++          </button>
++        )}
++        <input
++          ref={maskInput}
++          type="file"
++          accept=".nii,.nii.gz"
++          hidden
++          onChange={(e) => {
++            const f = e.target.files?.[0]
++            e.target.value = ''
++            if (f) onMask(f)
++          }}
++        />
++      </div>
++
++      <div className="volume-stage">
++        <canvas
++          ref={canvas}
++          aria-label={`Felie ${PLANES[plane].label.toLowerCase()} ${current + 1} din ${count}`}
++        />
++      </div>
++
++      <div className="volume-slider">
++        <input
++          type="range"
++          min="0"
++          max={count - 1}
++          value={current}
++          onChange={(e) => setIndex((ix) => ({ ...ix, [plane]: Number(e.target.value) }))}
++          aria-label="Felie"
++        />
++        <span className="mono">
++          {current + 1} / {count}
++        </span>
++      </div>
++    </div>
++  )
++}
+diff --git a/software-solution/frontend/src/format.js b/software-solution/frontend/src/format.js
+index 7fa2a07..86471bb 100644
+--- a/software-solution/frontend/src/format.js
++++ b/software-solution/frontend/src/format.js
+@@ -1,4 +1,4 @@
+-export const LABELS = { POSITIVE: 'Pozitiv', NEGATIVE: 'Negativ' }
++export const SEXES = { M: 'Masculin', F: 'Feminin' }
+ 
+ export function formatSize(bytes) {
+   if (bytes < 1024) return `${bytes} B`
+@@ -14,11 +14,31 @@ export function formatDate(date) {
+   return new Date(date).toLocaleDateString('ro-RO', { day: '2-digit', month: '2-digit', year: 'numeric' })
+ }
+ 
+-export const ACCEPTED = ['image/png', 'image/jpeg', 'image/bmp', 'image/tiff', 'image/webp']
+-const MAX_BYTES = 20 * 1024 * 1024
++export const formatPercent = (p) => `${Math.round(p * 100)}%`
++
++// Extensions, not MIME types: browsers report NIfTI and DICOM as empty or octet-stream.
++export const ACCEPT = '.nii,.nii.gz,.dcm,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp'
++const IMAGE = /\.(png|jpe?g|bmp|tiff?|webp)$/i
++const MAX_BYTES = 200 * 1024 * 1024
++
++export function scanKind(name) {
++  if (/\.nii(\.gz)?$/i.test(name)) return 'volume'
++  if (/\.dcm$/i.test(name)) return 'dicom'
++  if (IMAGE.test(name)) return 'image'
++  return null
++}
+ 
+ export function validate(file) {
+-  if (!ACCEPTED.includes(file.type)) return 'Format neacceptat. Folosiți PNG, JPEG, BMP, TIFF sau WebP.'
+-  if (file.size > MAX_BYTES) return 'Fișierul depășește 20 MB.'
++  if (!scanKind(file.name)) return 'Format neacceptat. Folosiți NIfTI (.nii, .nii.gz), DICOM (.dcm) sau o imagine.'
++  if (file.size > MAX_BYTES) return 'Fișierul depășește 200 MB.'
++  return ''
++}
++
++// Age and sex are required inputs of the model.
++export function clinicalProblem({ age, sex }) {
++  if (age === '') return 'Introduceți vârsta pacientului.'
++  const n = Number(age)
++  if (!Number.isInteger(n) || n < 0 || n > 120) return 'Vârsta trebuie să fie un număr întreg între 0 și 120.'
++  if (!SEXES[sex]) return 'Selectați sexul pacientului.'
+   return ''
+ }
+diff --git a/software-solution/frontend/src/index.css b/software-solution/frontend/src/index.css
+index 9200861..e97fb9d 100644
+--- a/software-solution/frontend/src/index.css
++++ b/software-solution/frontend/src/index.css
+@@ -14,6 +14,7 @@
+   --pos-soft: #fbeceb;
+   --neg: #22713a;
+   --neg-soft: #e9f4ec;
++  --warn: #8a5a00;
+ 
+   --font-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+   --font-data: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+@@ -40,6 +41,7 @@
+     --pos-soft: #2a1918;
+     --neg: #7ccb92;
+     --neg-soft: #15251b;
++    --warn: #e5b45c;
+     color-scheme: dark;
+   }
+ }
+@@ -56,6 +58,7 @@
+   --pos-soft: #2a1918;
+   --neg: #7ccb92;
+   --neg-soft: #15251b;
++  --warn: #e5b45c;
+   color-scheme: dark;
+ }
+ 
+@@ -91,7 +94,7 @@ h1, h2, h3, p { margin: 0; }
+ /* Workspace */
+ .workspace {
+   display: grid;
+-  grid-template-columns: minmax(0, 1fr) 340px;
++  grid-template-columns: minmax(0, 1fr) 360px;
+   border: 1px solid var(--line);
+   border-radius: var(--radius);
+   background: var(--surface);
+@@ -131,14 +134,139 @@ h1, h2, h3, p { margin: 0; }
+ .overlay.bl { bottom: 12px; left: 14px; }
+ .overlay.br { bottom: 12px; right: 14px; }
+ 
++/* Loading: the scan is dimmed, a scan line sweeps across it and a labelled
++   spinner sits in the middle. Animated with transforms only. */
++.scanning {
++  position: absolute;
++  inset: 0;
++  overflow: hidden;
++  background: rgb(0 0 0 / 0.35);
++  display: grid;
++  place-items: center;
++  pointer-events: none;
++}
+ .sweep {
+   position: absolute;
+-  inset: 0 auto 0 0;
+-  width: 2px;
+-  background: var(--viewport-ink);
+-  box-shadow: 0 0 12px 2px rgb(159 177 199 / 0.5);
+-  animation: sweep 1.2s ease-in-out infinite alternate;
++  top: 0;
++  bottom: 0;
++  left: 0;
++  width: 100%;
++  background: linear-gradient(90deg, transparent calc(100% - 60px), rgb(159 177 199 / 0.25) calc(100% - 3px), #cfe0f5 calc(100% - 2px));
++  animation: sweep 1.6s ease-in-out infinite alternate;
++}
++.scanning-label {
++  position: relative;
++  display: flex;
++  align-items: center;
++  gap: 10px;
++  padding: 8px 14px;
++  border-radius: var(--radius);
++  background: rgb(14 18 24 / 0.85);
++  color: #e3e8ef;
++  font-family: var(--font-data);
++  font-size: 13px;
++}
++.spinner {
++  display: inline-block;
++  width: 14px;
++  height: 14px;
++  border: 2px solid currentColor;
++  border-right-color: transparent;
++  border-radius: 50%;
++  animation: spin 0.7s linear infinite;
++  flex: none;
++}
++.spinner.large { width: 28px; height: 28px; margin-bottom: 10px; color: var(--viewport-ink); }
++.progress { display: grid; gap: 8px; }
++.progress-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
++.progress-bar span {
++  display: block;
++  width: 40%;
++  height: 100%;
++  border-radius: 2px;
++  background: var(--accent);
++  animation: indeterminate 1.3s ease-in-out infinite;
++}
++.viewport-error {
++  position: absolute;
++  left: 14px;
++  right: 14px;
++  bottom: 56px;
++  padding: 6px 10px;
++  border-radius: var(--radius);
++  background: rgb(42 25 24 / 0.9);
++  color: #f08a82;
++  font-size: 13px;
++}
++
++/* Volume viewer */
++.volume {
++  align-self: stretch;
++  justify-self: stretch;
++  display: grid;
++  grid-template-rows: auto minmax(0, 1fr) auto;
++  min-height: 480px;
++}
++.volume-tools, .volume-slider {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  gap: 8px 14px;
++  padding: 10px 14px;
++  font-size: 13px;
++}
++.volume-stage { display: grid; place-items: center; min-height: 0; padding: 0 14px; }
++.volume canvas {
++  display: block;
++  width: 100%;
++  height: 520px;
++  object-fit: contain;
++  image-rendering: pixelated;
++  cursor: ns-resize;
++}
++.volume-slider input { flex: 1; accent-color: var(--viewport-ink); }
++.volume-slider .mono { color: var(--viewport-ink); min-width: 64px; text-align: right; }
++.tool { display: inline-flex; align-items: center; gap: 6px; color: var(--viewport-ink); }
++.tool select {
++  font: inherit;
++  font-size: 13px;
++  background: #11161d;
++  color: #e3e8ef;
++  border: 1px solid #3a4656;
++  border-radius: var(--radius);
++  padding: 3px 6px;
++}
++.tool input[type='checkbox'] { accent-color: #f08a82; }
++.tool.link {
++  background: none;
++  border: none;
++  padding: 0;
++  font: inherit;
++  font-size: 13px;
++  text-decoration: underline;
++  text-underline-offset: 3px;
++  cursor: pointer;
+ }
++.tool.link:disabled { opacity: 0.5; cursor: default; }
++
++.segmented { display: inline-flex; border: 1px solid #3a4656; border-radius: var(--radius); overflow: hidden; }
++.segmented button {
++  font: inherit;
++  font-size: 13px;
++  padding: 4px 10px;
++  border: none;
++  background: transparent;
++  color: var(--viewport-ink);
++  cursor: pointer;
++}
++.segmented button + button { border-left: 1px solid #3a4656; }
++.segmented button.on { background: #e3e8ef; color: #0e1218; }
++.segmented button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
++.segmented.light { border-color: var(--line); display: flex; }
++.segmented.light button { flex: 1; color: var(--ink); height: 34px; font-size: 14px; }
++.segmented.light button + button { border-left-color: var(--line); }
++.segmented.light button.on { background: var(--accent); color: var(--accent-ink); }
++.segmented.light button:disabled { cursor: default; opacity: 0.55; }
+ 
+ .empty {
+   display: flex;
+@@ -152,6 +280,62 @@ h1, h2, h3, p { margin: 0; }
+ .empty-title { color: #e3e8ef; font-weight: 500; }
+ .empty-hint { font-size: 13px; max-width: 32ch; margin-bottom: 14px; }
+ .empty-error { font-size: 13px; color: #f08a82; margin-top: 6px; }
++.empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
++
++/* Patient form */
++.patient {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
++  gap: 12px;
++  margin: 0;
++  padding: 16px 0 0;
++  border: none;
++  border-top: 1px solid var(--line);
++  min-width: 0;
++}
++.patient legend {
++  float: left;
++  width: 100%;
++  padding: 0;
++  margin-bottom: 2px;
++  font-size: 12px;
++  font-weight: 600;
++  letter-spacing: 0.08em;
++  text-transform: uppercase;
++  color: var(--muted);
++}
++.field { display: grid; gap: 4px; min-width: 0; font-size: 13px; }
++.field > span { color: var(--muted); }
++.field em { font-style: normal; opacity: 0.8; }
++.field.wide { grid-column: 1 / -1; }
++.field input {
++  height: 34px;
++  width: 100%;
++  padding: 0 10px;
++  font: inherit;
++  font-size: 14px;
++  color: var(--ink);
++  background: var(--surface);
++  border: 1px solid var(--line);
++  border-radius: var(--radius);
++}
++.field input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
++
++/* Biomarker results */
++.markers { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
++.markers li { display: grid; gap: 5px; }
++.marker-head { display: flex; align-items: baseline; gap: 10px; }
++.marker-name { font-weight: 600; font-size: 15px; flex: 1; }
++.marker-desc { font-size: 12px; color: var(--muted); }
++.meter { position: relative; height: 8px; border-radius: 2px; background: var(--line); }
++.meter-fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--neg); }
++.positive .meter-fill { background: var(--pos); }
++.meter-threshold { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); }
++.disclaimer { font-size: 12px; color: var(--muted); margin-top: 4px; }
++.warn { font-size: 13px; color: var(--warn); }
++.export { display: flex; gap: 8px; width: 100%; }
++.export .btn { flex: 1; }
++.btn .spinner { width: 13px; height: 13px; margin-right: 8px; vertical-align: -2px; }
+ 
+ /* Report */
+ .report {
+@@ -227,26 +411,63 @@ th {
+ td { padding: 8px 14px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+ tr:last-child td { border-bottom: none; }
+ th:first-child, td:first-child { width: 110px; }
+-th:last-child, td:last-child { width: 120px; }
++th:last-child, td:last-child { width: 190px; }
+ .file-cell { max-width: 0; }
+ .file-cell > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
+ .file-cell > div img { width: 28px; height: 28px; object-fit: cover; border-radius: 2px; background: var(--viewport); }
+ .file-cell > div span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.chips { display: flex; flex-wrap: wrap; gap: 4px; }
++.thumb-3d {
++  flex: none;
++  width: 28px;
++  height: 28px;
++  display: grid;
++  place-items: center;
++  border-radius: 2px;
++  background: var(--viewport);
++  color: var(--viewport-ink);
++  font-family: var(--font-data);
++  font-size: 10px;
++}
+ .chip { display: inline-block; padding: 2px 8px; border-radius: 2px; font-size: 12px; font-weight: 600; }
+ .chip.positive { color: var(--pos); background: var(--pos-soft); }
+ .chip.negative { color: var(--neg); background: var(--neg-soft); }
+ 
+ .foot { font-size: 12px; color: var(--muted); max-width: 70ch; }
+ 
+-@keyframes sweep { from { left: 0; } to { left: calc(100% - 2px); } }
++@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(0); } }
++@keyframes spin { to { transform: rotate(360deg); } }
++@keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+ 
+ @media (max-width: 820px) {
+   .workspace { grid-template-columns: 1fr; }
+   .report { border-left: none; border-top: 1px solid var(--line); }
+   .viewport { min-height: 320px; }
++  .volume { min-height: 0; }
++  .volume canvas { height: min(60vh, 420px); }
+   th:first-child, td:first-child { width: 90px; }
+ }
+ 
++/* With reduced motion the sweep is dropped, but the spinner and progress bar
++   keep turning (slower) so it is still clear that something is happening. */
+ @media (prefers-reduced-motion: reduce) {
+-  .sweep { animation: none; }
++  .sweep { display: none; }
++  .spinner { animation-duration: 1.6s; }
++  .progress-bar span { animation-duration: 2.6s; }
++}
++
++/* Export PDF: print just the scan and the report. */
++@media print {
++  :root { color-scheme: light; }
++  body { background: #fff; }
++  .bar-note, .history, .report-actions, .volume-tools, .volume-slider, .patient .field.wide em { display: none !important; }
++  .workspace { grid-template-columns: 1fr; border: none; }
++  .viewport { min-height: 0; break-inside: avoid; }
++  .volume canvas { height: 360px; }
++  .report { border-left: none; padding: 16px 0; }
++  .patient input { border: none; padding: 0; }
++  .segmented.light button:not(.on) { display: none; }
++  .segmented.light { border: none; }
++  .segmented.light button.on { background: none; color: var(--ink); text-align: left; padding: 0; }
++  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+ }
+diff --git a/software-solution/frontend/src/volume.js b/software-solution/frontend/src/volume.js
+new file mode 100644
+index 0000000..771da9f
+--- /dev/null
++++ b/software-solution/frontend/src/volume.js
+@@ -0,0 +1,215 @@
++// CT volumes in the browser: a minimal NIfTI-1 reader/writer, a synthetic demo
++// case and slice rendering for the three anatomical planes.
++//
++// A volume is { dims: [nx, ny, nz], spacing: [sx, sy, sz], data, slope, inter, range }
++// where data is the raw typed array (x fastest, then y, then z).
++
++const TYPES = {
++  2: Uint8Array,
++  4: Int16Array,
++  8: Int32Array,
++  16: Float32Array,
++  64: Float64Array,
++  256: Int8Array,
++  512: Uint16Array,
++  768: Uint32Array,
++}
++
++export const isNifti = (name) => /\.nii(\.gz)?$/i.test(name)
++
++async function gunzip(buffer) {
++  const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'))
++  return new Response(stream).arrayBuffer()
++}
++
++export async function readNifti(file) {
++  let buffer = await file.arrayBuffer()
++  const head = new Uint8Array(buffer, 0, 2)
++  if (head[0] === 0x1f && head[1] === 0x8b) buffer = await gunzip(buffer)
++  if (buffer.byteLength < 352) throw new Error('Fișierul NIfTI este incomplet.')
++
++  const view = new DataView(buffer)
++  let le = true
++  if (view.getInt32(0, true) !== 348) {
++    if (view.getInt32(0, false) !== 348) throw new Error('Fișierul nu este un NIfTI-1 valid.')
++    le = false
++  }
++  const i16 = (o) => view.getInt16(o, le)
++  const f32 = (o) => view.getFloat32(o, le)
++
++  const ndim = i16(40)
++  const dims = [i16(42), ndim >= 2 ? i16(44) : 1, ndim >= 3 ? i16(46) : 1]
++  const Type = TYPES[i16(70)]
++  if (!Type) throw new Error('Tip de date NIfTI neacceptat.')
++  const spacing = [f32(80), f32(84), f32(88)].map((s) => (s > 0 && Number.isFinite(s) ? s : 1))
++  const offset = Math.max(352, Math.round(f32(108)))
++  const count = dims[0] * dims[1] * dims[2]
++  if (offset + count * Type.BYTES_PER_ELEMENT > buffer.byteLength) {
++    throw new Error('Datele volumului sunt incomplete.')
++  }
++
++  let data
++  if (le && offset % Type.BYTES_PER_ELEMENT === 0) {
++    data = new Type(buffer, offset, count)
++  } else {
++    // Unaligned or big-endian: copy element by element.
++    data = new Type(count)
++    const size = Type.BYTES_PER_ELEMENT
++    const get = {
++      1: (o) => (Type === Int8Array ? view.getInt8(o) : view.getUint8(o)),
++      2: (o) => (Type === Int16Array ? view.getInt16(o, le) : view.getUint16(o, le)),
++      4: (o) => (Type === Float32Array ? view.getFloat32(o, le) : Type === Int32Array ? view.getInt32(o, le) : view.getUint32(o, le)),
++      8: (o) => view.getFloat64(o, le),
++    }[size]
++    for (let i = 0; i < count; i++) data[i] = get(offset + i * size)
++  }
++
++  const slope = f32(112) || 1
++  const inter = f32(116) || 0
++  return withRange({ dims, spacing, data, slope, inter })
++}
++
++function withRange(volume) {
++  const { data, slope, inter } = volume
++  let min = Infinity
++  let max = -Infinity
++  const step = Math.max(1, Math.floor(data.length / 200000))
++  for (let i = 0; i < data.length; i += step) {
++    const v = data[i]
++    if (v < min) min = v
++    if (v > max) max = v
++  }
++  return { ...volume, range: [min * slope + inter, max * slope + inter] }
++}
++
++// The NIfTI file sent to the API for the demo case, so it follows the same path
++// as an uploaded scan.
++export function writeNifti({ dims, spacing, data }) {
++  const header = new ArrayBuffer(352)
++  const v = new DataView(header)
++  v.setInt32(0, 348, true)
++  ;[3, dims[0], dims[1], dims[2], 1, 1, 1, 1].forEach((d, i) => v.setInt16(40 + i * 2, d, true))
++  v.setInt16(70, 4, true) // int16
++  v.setInt16(72, 16, true)
++  ;[1, spacing[0], spacing[1], spacing[2], 1, 1, 1, 1].forEach((s, i) => v.setFloat32(76 + i * 4, s, true))
++  v.setFloat32(108, 352, true)
++  v.setFloat32(112, 1, true)
++  v.setInt8(123, 10) // xyzt_units: mm, s
++  new Uint8Array(header, 344, 4).set([0x6e, 0x2b, 0x31, 0]) // "n+1\0"
++  return new Blob([header, data.buffer])
++}
++
++// Synthetic chest CT (Hounsfield units) with a nodule in the right lung and its
++// segmentation mask. Deterministic, so the demo looks the same every time.
++export function demoCase() {
++  const [nx, ny, nz] = [160, 128, 96]
++  const data = new Int16Array(nx * ny * nz)
++  const mask = new Uint8Array(nx * ny * nz)
++  let seed = 7
++  const noise = () => {
++    seed = (seed * 1103515245 + 12345) & 0x7fffffff
++    return seed / 0x7fffffff - 0.5
++  }
++  const tumor = { x: 52, y: 58, z: 54, r: 9 }
++
++  for (let z = 0; z < nz; z++) {
++    const t = (z - nz / 2) / (nz / 2) // -1 (feet) .. 1 (head)
++    const lungScale = Math.sqrt(Math.max(0, 1 - Math.pow((z - nz * 0.45) / (nz * 0.48), 2)))
++    for (let y = 0; y < ny; y++) {
++      for (let x = 0; x < nx; x++) {
++        const i = x + y * nx + z * nx * ny
++        const bx = (x - nx / 2) / 72
++        const by = (y - ny / 2) / 52
++        let hu = -1000 // air
++        if (bx * bx + by * by < 1) {
++          hu = 40 // soft tissue
++          if (bx * bx + by * by > 0.82) hu = -90 // subcutaneous fat
++          for (const side of [-1, 1]) {
++            const lx = (x - (nx / 2 + side * 30)) / (24 * lungScale + 0.01)
++            const ly = (y - (ny / 2 - 4)) / (36 * lungScale + 0.01)
++            if (lx * lx + ly * ly < 1) {
++              hu = -850
++              // a few vessels running through the lung
++              if (Math.abs(Math.sin(x * 0.35 + z * 0.2) * Math.cos(y * 0.3)) > 0.97) hu = -100
++            }
++          }
++          const sx = x - nx / 2
++          const sy = y - (ny / 2 + 38)
++          if (sx * sx + sy * sy < 81) hu = 700 // vertebra
++          const hx = x - (nx / 2 + 8)
++          const hy = y - (ny / 2 + 4)
++          if (t < 0.1 && hx * hx * 0.6 + hy * hy < 380) hu = 45 // heart
++        }
++        const dx = x - tumor.x
++        const dy = y - tumor.y
++        const dz = (z - tumor.z) * 1.6
++        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 2 * Math.sin(x * 0.9) * Math.cos(y * 0.7)
++        if (d < tumor.r) {
++          hu = 35
++          mask[i] = 1
++        }
++        data[i] = Math.round(hu + noise() * 40)
++      }
++    }
++  }
++
++  const volume = withRange({ dims: [nx, ny, nz], spacing: [1.5, 1.5, 2.5], data, slope: 1, inter: 0 })
++  const file = new File([writeNifti(volume)], 'caz-demo.nii', { type: 'application/octet-stream' })
++  return { file, volume, mask, focus: tumor }
++}
++
++export const PLANES = {
++  axial: { label: 'Axial', axis: 2 },
++  coronal: { label: 'Coronal', axis: 1 },
++  sagittal: { label: 'Sagital', axis: 0 },
++}
++
++// Display windows in HU; "auto" uses the full value range of the volume.
++export const WINDOWS = {
++  lung: { label: 'Pulmonar', center: -600, width: 1500 },
++  mediastinum: { label: 'Mediastin', center: 40, width: 400 },
++  auto: { label: 'Auto' },
++}
++
++export const looksLikeHU = (volume) => volume.range[0] < -500
++
++export function sliceShape(volume, plane) {
++  const [nx, ny, nz] = volume.dims
++  const [sx, sy, sz] = volume.spacing
++  if (plane === 'axial') return { cols: nx, rows: ny, aspect: (nx * sx) / (ny * sy) }
++  if (plane === 'coronal') return { cols: nx, rows: nz, aspect: (nx * sx) / (nz * sz) }
++  return { cols: ny, rows: nz, aspect: (ny * sy) / (nz * sz) }
++}
++
++// Draw one slice into an ImageData. Rows are flipped so anterior / superior
++// end up at the top of the screen.
++export function renderSlice(volume, mask, plane, index, win, showMask) {
++  const [nx, ny] = volume.dims
++  const { cols, rows } = sliceShape(volume, plane)
++  const { data, slope, inter } = volume
++  const [lo, hi] = win.width ? [win.center - win.width / 2, win.center + win.width / 2] : volume.range
++  const scale = 255 / (hi - lo || 1)
++  const image = new ImageData(cols, rows)
++  const px = image.data
++
++  for (let r = 0; r < rows; r++) {
++    const flipped = rows - 1 - r
++    for (let c = 0; c < cols; c++) {
++      let i
++      if (plane === 'axial') i = c + flipped * nx + index * nx * ny
++      else if (plane === 'coronal') i = c + index * nx + flipped * nx * ny
++      else i = index + c * nx + flipped * nx * ny
++      const g = Math.max(0, Math.min(255, (data[i] * slope + inter - lo) * scale))
++      const o = (r * cols + c) * 4
++      if (showMask && mask && mask[i]) {
++        px[o] = 0.45 * g + 0.55 * 255
++        px[o + 1] = 0.45 * g + 0.55 * 70
++        px[o + 2] = 0.45 * g + 0.55 * 60
++      } else {
++        px[o] = px[o + 1] = px[o + 2] = g
++      }
++      px[o + 3] = 255
++    }
++  }
++  return image
++}

@@ -1,23 +1,27 @@
 import { useRef, useState } from 'react'
-import { ACCEPTED, validate, formatSize, formatDate, formatTime } from '../format.js'
+import { ACCEPT, validate, formatSize, formatDate, formatTime } from '../format.js'
+import VolumeView from './VolumeView.jsx'
 
-export default function Viewport({ scan, busy, onFile, onMeasure }) {
+export default function Viewport({ scan, busy, reading, error, onFile, onDemo, onMask, onMeasure }) {
   const input = useRef(null)
   const [dragging, setDragging] = useState(false)
-  const [error, setError] = useState('')
+  const [problem, setProblem] = useState('')
 
   function take(files) {
     const f = files?.[0]
     if (!f) return
-    const problem = validate(f)
-    setError(problem)
-    if (!problem) onFile(f)
+    const p = validate(f)
+    setProblem(p)
+    if (!p) onFile(f)
   }
+
+  const shownError = problem || error
 
   return (
     <section
       className={`viewport ${dragging ? 'dragging' : ''} ${scan ? 'has-scan' : ''}`}
       aria-label="Imagine CT"
+      aria-busy={busy || reading}
       onDragOver={(e) => {
         e.preventDefault()
         if (!busy) setDragging(true)
@@ -33,7 +37,7 @@ export default function Viewport({ scan, busy, onFile, onMeasure }) {
         ref={input}
         id="scan-file"
         type="file"
-        accept={ACCEPTED.join(',')}
+        accept={ACCEPT}
         hidden
         onChange={(e) => {
           take(e.target.files)
@@ -41,30 +45,61 @@ export default function Viewport({ scan, busy, onFile, onMeasure }) {
         }}
       />
 
-      {scan ? (
+      {reading ? (
+        <div className="empty">
+          <span className="spinner large" aria-hidden="true" />
+          <p className="empty-title">Se citește volumul…</p>
+        </div>
+      ) : scan ? (
         <>
-          <img
-            src={scan.url}
-            alt={`Imagine CT: ${scan.file.name}`}
-            onLoad={(e) => onMeasure(e.target.naturalWidth, e.target.naturalHeight)}
-          />
-          <div className="overlay tl">{scan.file.name}</div>
-          <div className="overlay tr">{scan.width ? `${scan.width} × ${scan.height} px` : ''}</div>
-          <div className="overlay bl">{formatSize(scan.file.size)}</div>
-          <div className="overlay br">
-            {formatDate(scan.loadedAt)} {formatTime(scan.loadedAt)}
-          </div>
-          {busy && <div className="sweep" aria-hidden="true" />}
+          {scan.kind === 'volume' ? (
+            <VolumeView key={scan.loadedAt.getTime()} scan={scan} busy={busy} onMask={onMask} />
+          ) : scan.kind === 'image' ? (
+            <img
+              src={scan.url}
+              alt={`Imagine CT: ${scan.file.name}`}
+              onLoad={(e) => onMeasure(e.target.naturalWidth, e.target.naturalHeight)}
+            />
+          ) : (
+            <div className="empty">
+              <p className="empty-title">Fișier DICOM încărcat</p>
+              <p className="empty-hint">Previzualizarea DICOM nu este încă disponibilă. Analiza poate fi rulată.</p>
+            </div>
+          )}
+          {scan.kind !== 'volume' && (
+            <>
+              <div className="overlay tl">{scan.file.name}</div>
+              <div className="overlay tr">{scan.width ? `${scan.width} × ${scan.height} px` : ''}</div>
+              <div className="overlay bl">{formatSize(scan.file.size)}</div>
+              <div className="overlay br">
+                {formatDate(scan.loadedAt)} {formatTime(scan.loadedAt)}
+              </div>
+            </>
+          )}
+          {shownError && <p className="viewport-error" role="alert">{shownError}</p>}
+          {busy && (
+            <div className="scanning" aria-hidden="true">
+              <div className="sweep" />
+              <div className="scanning-label">
+                <span className="spinner" /> Analiză în curs
+              </div>
+            </div>
+          )}
         </>
       ) : (
         <div className="empty">
           <Crosshair />
-          <p className="empty-title">Trageți aici o imagine CT</p>
-          <p className="empty-hint">o felie axială a toracelui, PNG, JPEG, BMP, TIFF sau WebP, max. 20 MB</p>
-          <button className="btn on-dark" onClick={() => input.current?.click()}>
-            Alegeți un fișier
-          </button>
-          {error && <p className="empty-error" role="alert">{error}</p>}
+          <p className="empty-title">Trageți aici o scanare CT</p>
+          <p className="empty-hint">volum NIfTI (.nii, .nii.gz), fișier DICOM sau o felie axială ca imagine, max. 200 MB</p>
+          <div className="empty-actions">
+            <button className="btn on-dark" onClick={() => input.current?.click()}>
+              Alegeți un fișier
+            </button>
+            <button className="btn on-dark" onClick={onDemo}>
+              Caz demo
+            </button>
+          </div>
+          {shownError && <p className="empty-error" role="alert">{shownError}</p>}
         </div>
       )}
     </section>

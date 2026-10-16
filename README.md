@@ -1,12 +1,26 @@
 # Detecția cancerului pulmonar din imagini CT
 
-Proiect MIRPR 2026–2027. Aplicație web în care utilizatorul încarcă o imagine CT a
-toracelui, iar un model AI o clasifică drept **POZITIV** (semne de nodul malign) sau
-**NEGATIV**.
+Proiect MIRPR 2026–2027. „Biopsie virtuală”: aplicație web în care medicul încarcă o
+scanare CT a toracelui (volum NIfTI, DICOM sau o felie 2D) împreună cu vârsta și sexul
+pacientului, iar un model AI estimează probabilitatea ca tumora să exprime fiecare
+biomarker (EGFR, ALK, KRAS, PD-L1). Problema este de clasificare multi-label.
 
 > **Etapa 1 (flow-ul de bază):** fluxul încărcare → analiză → rezultat funcționează cap
-> la cap. Predicția este hard-codată în `software-solution/backend/model.py` și va fi
-> înlocuită cu modelul antrenat în etapele următoare.
+> la cap. Predicția este hard-codată în `software-solution/backend/model.py`
+> (`predict(volum, vârstă, sex)`) și va fi înlocuită cu modelul antrenat în etapele
+> următoare, fără alte modificări în API sau interfață.
+
+## Funcționalități
+
+- încărcare scanare CT (NIfTI `.nii` / `.nii.gz`, DICOM `.dcm`, PNG/JPEG/…) sau caz demo
+  (volum CT sintetic cu nodul și mască de segmentare, generat în browser);
+- date clinice: cod pacient (opțional), vârstă, sex;
+- vizualizare volum: planuri axial / coronal / sagital, navigare prin felii (slider sau
+  rotița mouse-ului), ferestre pulmonar / mediastin, suprapunerea măștii de segmentare
+  (încărcată ca NIfTI separat);
+- rezultate per biomarker: probabilitate, prag de decizie, pozitiv/negativ;
+- export raport JSON și PDF (din dialogul de printare);
+- istoric al analizelor din sesiunea curentă.
 
 ## Echipa
 
@@ -18,8 +32,8 @@ toracelui, iar un model AI o clasifică drept **POZITIV** (semne de nodul malign
 ```
 ┌──────────────┐  POST /api/predict   ┌──────────────┐        ┌──────────────────┐
 │ React (Vite) │ ───────────────────▶ │ Flask API    │ ─────▶ │ model.predict()  │
-│ încărcare + UI  │ ◀─────────────────── │ validation   │ ◀───── │ (mock deocamdată)   │
-└──────────────┘  {prediction, conf}  └──────────────┘        └──────────────────┘
+│ CT + vârstă, sex│ ◀─────────────────── │ validation   │ ◀───── │ (mock deocamdată)   │
+└──────────────┘  {biomarkers[]}    └──────────────┘        └──────────────────┘
 ```
 
 ## Structura proiectului
@@ -59,6 +73,6 @@ http://127.0.0.1:5000 (Flask servește și interfața).
 | Metodă | Rută           | Corp cerere                  | Răspuns |
 | :----- | :------------- | :--------------------------- | :------- |
 | GET    | `/api/health`  |                              | `{ status, model }` |
-| POST   | `/api/predict` | `multipart/form-data`, câmpul `image` (PNG/JPEG/BMP/TIFF/WebP, ≤ 20 MB) | `{ prediction, model, filename, timestamp }` |
+| POST   | `/api/predict` | `multipart/form-data`: `scan` (NIfTI/DICOM/imagine, ≤ 200 MB), `age` (0–120), `sex` (`M`/`F`) | `{ biomarkers, patient, model, filename, timestamp }` |
 
-`prediction` este `"POSITIVE"` sau `"NEGATIVE"`.
+`biomarkers` este o listă de `{ name, description, probability, threshold, positive }`.

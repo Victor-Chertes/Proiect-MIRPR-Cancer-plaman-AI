@@ -7,8 +7,10 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import model
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"}
-MAX_UPLOAD_MB = 20
+# 2D slices, NIfTI volumes (.nii / .nii.gz) and DICOM files.
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp", "nii", "gz", "dcm"}
+SEXES = {"M", "F"}
+MAX_UPLOAD_MB = 200
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
 app = Flask(__name__, static_folder=None)
@@ -16,7 +18,18 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 def allowed(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    name = filename.lower()
+    if name.endswith(".gz"):
+        return name.endswith(".nii.gz")
+    return "." in name and name.rsplit(".", 1)[1] in ALLOWED_EXTENSIONS
+
+
+def parse_age(value):
+    try:
+        age = int(value)
+    except (TypeError, ValueError):
+        return None
+    return age if 0 <= age <= 120 else None
 
 
 @app.get("/api/health")
@@ -26,19 +39,27 @@ def health():
 
 @app.post("/api/predict")
 def predict():
-    file = request.files.get("image")
+    file = request.files.get("scan")
     if file is None or file.filename == "":
-        return jsonify(error="Nu a fost încărcată nicio imagine."), 400
+        return jsonify(error="Nu a fost încărcată nicio scanare."), 400
     if not allowed(file.filename):
         return jsonify(error="Format de fișier neacceptat."), 415
+
+    age = parse_age(request.form.get("age"))
+    if age is None:
+        return jsonify(error="Vârsta trebuie să fie un număr între 0 și 120."), 400
+    sex = request.form.get("sex", "").upper()
+    if sex not in SEXES:
+        return jsonify(error="Sexul trebuie să fie M sau F."), 400
 
     data = file.read()
     if not data:
         return jsonify(error="Fișierul încărcat este gol."), 400
 
-    result = model.predict(data)
+    result = model.predict(data, age, sex)
     return jsonify(
         filename=file.filename,
+        patient={"age": age, "sex": sex},
         timestamp=datetime.now(timezone.utc).isoformat(),
         **result,
     )
