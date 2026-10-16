@@ -30,13 +30,14 @@
 \usepackage{url}
 \usepackage{verbatim}
 \usepackage{xcolor}
+\usepackage{booktabs}
 
 \geometry{a4paper,top=3cm,left=2cm,right=2cm,bottom=3cm}
 
 \pagestyle{fancy}
 \fancyhf{}
 \fancyhead[LE,RO]{Identificarea cancerului de plămân}
-\fancyhead[RE,LO]{Numele echipei}
+\fancyhead[RE,LO]{CCRC}
 \fancyfoot[RE,LO]{Proiect 2023-2024}
 \fancyfoot[LE,RO]{\thepage}
 
@@ -130,24 +131,95 @@ Răzvan Romulus Costea
 \label{chapter:introducere}
 
 \section{Ideea de bază a proiectului}
-Se dorește dezvoltarea unui sistem inteligent care să ajute medicii în diagnosticarea timpurie a cancerului de plămân folosind scanări CT 3D segmentate, markeri clinici (vârstă, gen) și markeri IHC. Scopul final este construirea unei "biopsii virtuale" care să sprijine radiologii, formulând problema ca un task de clasificare multi-label.
+Proiectul dezvoltă un sistem inteligent care analizează scanări CT pulmonare (eventual PET) și, împreună cu date clinice simple (vârstă, sex), prezice biomarkeri tumorali. Practic, este o „biopsie virtuală”: un instrument non-invaziv care sprijină radiologul în diagnosticarea timpurie a cancerului de plămân.
 
 \section{Motivație}
-Povara medicilor poate fi redusă cu ajutorul tehnicilor de AI care sunt esențiale în automatizarea diagnosticului și clasificării bolilor. Diagnosticarea timpurie este critică pentru supraviețuire, iar algoritmii inteligenți pot identifica subtilități în imaginile CT care sunt adesea invizibile ochiului uman.
+\begin{itemize}
+    \item Cancerul pulmonar este cel mai mortal tip de cancer la nivel mondial. Prognosticul depinde puternic de stadiul la care e detectat: în stadii incipiente supraviețuirea la 5 ani este mult mai mare decât în stadii avansate.
+    \item Biopsia este invazivă, costisitoare, durează zile până la rezultatul IHC/genomic și nu poate fi repetată ușor. Unii pacienți nu o pot face din cauza localizării tumorii sau a stării generale.
+    \item Un examen CT conține sute de felii pe pacient, iar radiologii trebuie să le interpreteze sub presiune de timp. Noduli mici și subtili pot fi omiși, iar între radiologi există variabilitate inter-observator.
+    \item Relațiile dintre aspectul imagistic (textură, formă, densitate) și profilul molecular al tumorii sunt prea complexe și subtile pentru a fi evaluate vizual sau cu reguli scrise de mână. Deep learning-ul poate învăța automat aceste tipare (radiomics/radiogenomics).
+    \item Un algoritm inteligent oferă consistență, viteză și o a doua opinie, reducând povara medicilor fără a-i înlocui.
+\end{itemize}
+
+\section{Funcționalitățile de bază ale aplicației}
+\begin{enumerate}
+    \item \textbf{Încărcare date pacient:} upload fișier CT (NIfTI/DICOM) sau selectarea unui caz demo.
+    \item \textbf{Introducere date clinice:} vârstă și sex.
+    \item \textbf{Vizualizare CT:} navigare prin felii (axial/coronal/sagital) și suprapunerea măștii de segmentare.
+    \item \textbf{Buton „Rulează analiza”:} apelează modulul AI. Momentan returnează o predicție hard-codată (ex. EGFR: 0.82, ALK: 0.12, KRAS: 0.35, PD-L1: 0.67). Interfața este definită astfel încât ulterior funcția predict() să fie înlocuită cu modelul real, fără alte modificări.
+    \item \textbf{Afișarea rezultatelor:} tabel/bare cu probabilitatea pentru fiecare biomarker, cu indicator pozitiv/negativ după prag și avertisment că rezultatul este orientativ.
+    \item \textbf{Export raport:} PDF/JSON cu datele pacientului, imaginea și predicțiile.
+    \item \textbf{Istoric cazuri} (opțional): lista analizelor anterioare.
+\end{enumerate}
 
 \chapter{Problema științifică abordată}
 \label{chapter:problema_stiintifica}
 
 \section{Descrierea problemei științifice}
-Problema științifică constă în maparea informațiilor macroscopice (imagini CT/PET) la un nivel microscopic (biomarkeri tumorali și patologie). Formal, dorim să creăm o funcție de mapare $f(x) \rightarrow y$, unde $x$ reprezintă datele multimodale (CT 3D, Vârstă, Gen), iar $y$ reprezintă un set de etichete (clasificare multi-label) corespunzătoare biomarkerilor specifici.
+Imaginează-ți că un pacient face un CT toracic. Radiologul vede o masă suspectă, dar nu știe ce tip de tumoră este și ce markeri exprimă, informație care ar decide tratamentul (chimioterapie, imunoterapie, terapie țintită). Normal, ar trebui să aștepte o biopsie. Sistemul nostru „se uită” la imaginea CT, la segmentarea tumorii, la vârstă și sex și spune: „această tumoare probabil exprimă markerii X și Y, cu probabilitățile …”. Medicul primește un indiciu rapid, înainte sau în locul biopsiei.
+
+\begin{itemize}
+    \item Tip de problemă: clasificare multi-label (un pacient poate avea simultan mai mulți biomarkeri pozitivi, deci etichetele nu se exclud reciproc).
+    \item Intrare: x = (V, a, g), unde V este volumul CT 3D segmentat (tumoarea/regiunea de interes), a este vârsta, g este sexul.
+    \item Ieșire: vectorul ŷ $\in$ $[0,1]^K$, unde K este numărul de biomarkeri și $\hat{y}_k$ este probabilitatea ca biomarkerul k să fie pozitiv.
+    \item Adevărul de teren (ground truth): y $\in \{0,1\}^K$, obținut din biopsie confirmată (IHC, eventual genomic).
+    \item Obiectiv: învățarea unei funcții $f_\theta: (V, a, g) \to \hat{y}$ care minimizează o pierdere de tip binary cross-entropy sumată pe cele K etichete:
+    \item L = -$\frac{1}{K}$ $\sum_{k}$ $\left[ y_k \log \hat{y}_k + (1-y_k) \log(1-\hat{y}_k) \right]$
+    \item Decizia finală: $\hat{y}_k \geq \widehat{\text{prag}}_k \implies \text{biomarker pozitiv}$ (pragul se poate calibra per etichetă).
+\end{itemize}
+
+\section{Utilizatori}
+\begin{itemize}
+    \item Radiologi (utilizatori principali): suport pentru diagnostic.
+    \item Oncologi și pneumologi: orientarea planului de tratament.
+    \item Patologi: prioritizarea cazurilor/probelor.
+    \item Cercetători medicali.
+\end{itemize}
+
+\section{Tipuri de date}
+\begin{table}[htbp]
+    \centering
+    \renewcommand{\arraystretch}{1.5}
+    \begin{tabular}{llll}
+        \toprule
+        & \textbf{Tip de date} & \textbf{Format uzual} & \textbf{Rol} \\
+        \midrule
+        \textbf{Intrare} & CT 3D (eventual PET) & DICOM / NIfTI & Imagistică \\
+                         & segmentat            & (.nii.gz)     & principală \\
+        \midrule
+        \textbf{Intrare} & Vârstă               & Numeric       & Variabilă clinică \\
+        \midrule
+        \textbf{Intrare} & Sex                  & Categorial (binar) & Variabilă clinică \\
+        \midrule
+        \textbf{Ieșire/etichete} & Markeri IHC (eventual & Binar per marker & Ținta predicției \\
+                                 & genomici)             & (0/1)            & \\
+        \bottomrule
+    \end{tabular}
+    \caption{Tabel date}
+    \label{tab:date}
+\end{table}
+
+\section{Măsurarea performanței}
+Pentru multi-label se raportează atât metrici per etichetă, cât și medii:
+\begin{itemize}
+    \item AUC-ROC per marker și medie (macro): metrica principală, robustă la dezechilibru de clase.
+    \item Sensibilitate (recall) și specificitate: critice în context medical (să nu ratezi un caz pozitiv).
+    \item Precizie, F1-score (macro/micro).
+    \item Hamming loss și subset accuracy: calitatea predicției pe setul întreg de etichete.
+    \item Curbe de calibrare / Brier score: cât de fiabile sunt probabilitățile.
+    \item Validare: split pe pacient (nu pe felii, pentru a evita scurgerea de date), cross-validation stratificată, set de test separat.
+    \item Comparație cu baseline: regresie logistică pe doar vârstă+sex, iar apoi CNN 3D. Câștigul arată valoarea imaginii.
+\end{itemize}
 
 \section{Abstract grafic}
-% \begin{figure}[htbp]
-% 	\centerline{\includegraphics{Fig/abstract_grafic.png}}  
-% 	\caption{Diagrama fluxului aplicației: preluare CT -> preprocesare -> model AI -> predicție biomarkeri.}
-% 	\label{fig:abstract_grafic}
-% \end{figure}
-Aici se va adăuga diagrama care reflectă pașii efectuați în aplicație.
+\begin{figure}[htbp]
+	\centerline{\includegraphics[width=0.78\textwidth]{abstract_grafic.png}}  
+	\caption{Diagrama fluxului aplicației}
+	\label{fig:abstract_grafic}
+\end{figure}
+
+
 
 \chapter{Metode existente de rezolvare a problemei (related work)}
 \label{chapter:related_work}
