@@ -1,106 +1,69 @@
 import { useState } from 'react'
 import { predict } from './api.js'
-import Dropzone from './components/Dropzone.jsx'
-import ResultCard from './components/ResultCard.jsx'
+import Viewport from './components/Viewport.jsx'
+import Report from './components/Report.jsx'
 import History from './components/History.jsx'
 
 export default function App() {
-  const [file, setFile] = useState(null)
-  const [preview, setPreview] = useState(null)
+  const [scan, setScan] = useState(null) // { file, url, width, height, loadedAt }
   const [status, setStatus] = useState('idle') // idle | loading | done | error
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [history, setHistory] = useState([])
 
-  // Free the current preview unless the history list still shows it.
-  function releasePreview() {
-    if (preview && !history.some((h) => h.thumb === preview)) URL.revokeObjectURL(preview)
-  }
-
-  function selectFile(f) {
-    releasePreview()
-    setFile(f)
-    setPreview(URL.createObjectURL(f))
-    setResult(null)
-    setError('')
-    setStatus('idle')
-  }
-
-  function reset() {
-    releasePreview()
-    setFile(null)
-    setPreview(null)
+  function selectFile(file) {
+    // Free the previous preview unless the history list still shows it.
+    if (scan && !history.some((h) => h.thumb === scan.url)) URL.revokeObjectURL(scan.url)
+    setScan({ file, url: URL.createObjectURL(file), loadedAt: new Date() })
     setResult(null)
     setError('')
     setStatus('idle')
   }
 
   async function analyze() {
-    if (!file) return
     setStatus('loading')
     setError('')
     try {
-      const data = await predict(file)
+      const data = await predict(scan.file)
       setResult(data)
       setStatus('done')
-      setHistory((h) =>
-        [{ ...data, thumb: preview, id: crypto.randomUUID() }, ...h].slice(0, 5),
-      )
+      setHistory((h) => [{ ...data, thumb: scan.url, id: crypto.randomUUID() }, ...h].slice(0, 8))
     } catch (e) {
-      setError(e.message === 'Failed to fetch' ? 'Serverul nu răspunde.' : e.message)
+      setError(e.message === 'Failed to fetch' ? 'Serverul nu răspunde. Verificați că backend-ul Flask rulează.' : e.message)
       setStatus('error')
     }
   }
 
   return (
-    <div className="page">
-      <header className="header">
-        <h1>Detecția cancerului pulmonar</h1>
-        <p>Încărcați o imagine CT a toracelui pentru analiză.</p>
+    <div className="app">
+      <header className="bar">
+        <span className="bar-title">Detecție cancer pulmonar</span>
+        <span className="bar-note">Model provizoriu · rezultatele sunt simulate</span>
       </header>
 
-      <main>
-        {!file ? (
-          <Dropzone onFile={selectFile} />
-        ) : (
-          <div className="card">
-            <div className="scan">
-              <img src={preview} alt="Imagine încărcată" />
-            </div>
-
-            <div className="toolbar">
-              <span className="file-name" title={file.name}>
-                {file.name} <span className="file-size">· {formatSize(file.size)}</span>
-              </span>
-              <div className="actions">
-                <button className="btn" onClick={reset} disabled={status === 'loading'}>
-                  {status === 'done' ? 'Altă imagine' : 'Elimină'}
-                </button>
-                {status !== 'done' && (
-                  <button className="btn primary" onClick={analyze} disabled={status === 'loading'}>
-                    {status === 'loading' ? 'Se analizează…' : 'Analizează'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {status === 'error' && <p className="error">{error}</p>}
-            {status === 'done' && result && <ResultCard result={result} />}
-          </div>
-        )}
-
-        {history.length > 0 && <History items={history} />}
+      <main className="workspace">
+        <Viewport
+          scan={scan}
+          busy={status === 'loading'}
+          onFile={selectFile}
+          onMeasure={(width, height) => setScan((s) => ({ ...s, width, height }))}
+        />
+        <Report
+          scan={scan}
+          status={status}
+          result={result}
+          error={error}
+          onAnalyze={analyze}
+          onReplace={selectFile}
+        />
       </main>
 
-      <footer className="footer">
-        Prototip de cercetare. Rezultatul nu reprezintă un diagnostic medical.
+      <History items={history} />
+
+      <footer className="foot">
+        Prototip de cercetare (MIRPR 2026–2027). Rezultatul nu reprezintă un diagnostic medical și
+        trebuie interpretat de un medic radiolog.
       </footer>
     </div>
   )
-}
-
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
