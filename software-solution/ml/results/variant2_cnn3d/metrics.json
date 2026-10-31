@@ -1,0 +1,18 @@
+{
+  "egfr": {
+    "auc": 0.5833333333333334,
+    "accuracy": 0.3333333333333333,
+    "sensitivity": 1.0,
+    "specificity": 0.1111111111111111,
+    "test_patients": 24,
+    "test_positives": 6
+  },
+  "kras": {
+    "auc": 0.6111111111111112,
+    "accuracy": 0.7083333333333334,
+    "sensitivity": 0.5,
+    "specificity": 0.7777777777777778,
+    "test_patients": 24,
+    "test_positives": 6
+  }
+}

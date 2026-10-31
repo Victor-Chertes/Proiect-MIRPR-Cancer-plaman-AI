@@ -1,0 +1,40 @@
+{
+  "egfr": {
+    "auc": 0.7222222222222222,
+    "accuracy": 0.6666666666666666,
+    "sensitivity": 0.5,
+    "specificity": 0.7222222222222222,
+    "test_patients": 24,
+    "test_positives": 6,
+    "coefficients": {
+      "volume_ml": -0.715,
+      "diameter_mm": 0.651,
+      "compactness": 0.28,
+      "hu_mean": 0.26,
+      "hu_std": -0.204,
+      "solid_fraction": -0.281,
+      "ground_glass_fraction": 0.54,
+      "age": 0.261,
+      "sex_m": -0.036
+    }
+  },
+  "kras": {
+    "auc": 0.5462962962962963,
+    "accuracy": 0.5833333333333334,
+    "sensitivity": 0.6666666666666666,
+    "specificity": 0.5555555555555556,
+    "test_patients": 24,
+    "test_positives": 6,
+    "coefficients": {
+      "volume_ml": 0.389,
+      "diameter_mm": -0.097,
+      "compactness": -0.156,
+      "hu_mean": -0.202,
+      "hu_std": 0.335,
+      "solid_fraction": -0.213,
+      "ground_glass_fraction": -0.077,
+      "age": 0.001,
+      "sex_m": 0.053
+    }
+  }
+}

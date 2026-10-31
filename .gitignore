@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .env
 .DS_Store
+software-solution/ml/data/full/
+software-solution/ml/data/tmp/
+*.log
+*.7z
