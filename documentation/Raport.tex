@@ -17,11 +17,16 @@
 \usepackage{comment} 
 \usepackage{epsfig} 
 \usepackage{fancyhdr}
-\usepackage[T1]{fontenc}
-\usepackage{geometry} 
+\usepackage{iftex}
+\ifXeTeX
+  \usepackage{fontspec}
+\else
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+\fi
+\usepackage{geometry}
 \usepackage{graphicx}
-\usepackage[colorlinks]{hyperref} 
-\usepackage[utf8]{inputenc}
+\usepackage[colorlinks]{hyperref}
 \usepackage{multicol}
 \usepackage{multirow} 
 \usepackage{rotating}
@@ -287,7 +292,7 @@ Această lucrare descrie perfect etapele tehnice preliminare: cum să transformi
 \section{Prezentare generală}
 Problema este tratată ca o clasificare binară pentru fiecare biomarker (EGFR mutant/wildtype, KRAS mutant/wildtype), pornind de la volumul CT al tumorii, masca de segmentare a tumorii, vârsta și sexul pacientului. ALK nu a fost inclus în antrenare deoarece setul de date conține doar 2 pacienți cu translocație ALK, insuficient pentru a învăța sau a evalua un clasificator.
 
-Toate cele trei variante folosesc aceeași preprocesare, implementată în \texttt{software-solution/ml/prepare\_dataset.py}:
+Toate cele trei variante folosesc aceeași preprocesare, implementată în \nolinkurl{software-solution/ml/prepare_dataset.py}:
 \begin{enumerate}
     \item seria CT (DICOM) și segmentarea expertului (DICOM SEG) sunt citite cu \texttt{SimpleITK} și \texttt{pydicom}, iar masca este rasterizată pe grila CT folosind poziția fiecărei felii;
     \item volumul și masca sunt reeșantionate la voxeli izotropi de 1~mm (interpolare liniară pentru CT, nearest neighbour pentru mască), pentru a elimina diferențele de rezoluție dintre scanere (grosimea feliei variază între 0.625 și 2.5~mm);
@@ -311,7 +316,7 @@ unde $c_{y}$ sunt ponderile de clasă (\texttt{class\_weight="balanced"}) care c
 
 \textbf{Motivație.} Cu aproximativ 95 de pacienți de antrenare, un model cu 10 parametri este cel mai puțin expus supra-învățării. Literatura de radiogenomică arată că mutațiile EGFR apar mai des în tumori cu componentă de sticlă mată, iar coeficienții regresiei logistice pot fi citiți direct de un medic.
 
-\textbf{Librării.} \texttt{SimpleITK} (citire NIfTI), \texttt{NumPy}, \texttt{SciPy} (eroziune morfologică pentru suprafață), \texttt{scikit-learn} (\texttt{StandardScaler}, \texttt{LogisticRegression}). Implementare: \texttt{software-solution/ml/variant1\_features.py}.
+\textbf{Librării.} \texttt{SimpleITK} (citire NIfTI), \texttt{NumPy}, \texttt{SciPy} (eroziune morfologică pentru suprafață), \texttt{scikit-learn} (\texttt{StandardScaler}, \texttt{LogisticRegression}). Implementare: \nolinkurl{software-solution/ml/variant1_features.py}.
 
 \section{Varianta 2: rețea neuronală convoluțională 3D antrenată de la zero}
 \textbf{Algoritmul.} Intrarea rețelei este cubul central de $64 \times 64 \times 64$ voxeli (64~mm la rezoluția de 1~mm) cu două canale: CT-ul normalizat în $[0,1]$ din intervalul $[-1000, 400]$ HU și masca binară a tumorii. Arhitectura conține trei blocuri \textit{Conv3D $3\times3\times3$ -- BatchNorm -- ReLU -- MaxPool $2\times2\times2$} cu 8, 16 și 32 de filtre, urmate de un global average pooling care produce un vector de 32 de trăsături. Acest vector este concatenat cu vârsta (standardizată) și sexul, apoi trece printr-un strat Dropout (0.5) și un strat liniar cu 2 ieșiri, câte una pentru EGFR și KRAS (clasificare multi-label cu ieșiri sigmoid).
@@ -322,7 +327,7 @@ Funcția de pierdere este binary cross-entropy mascată: dacă un pacient are o 
 
 \textbf{Motivație.} Modelul învață direct din voxeli, fără a presupune ce trăsături contează, și vede întreaga formă 3D a tumorii și țesutul din jur. Rețeaua este intenționat mică (aproximativ 18 mii de parametri) pentru a putea fi antrenată pe CPU și pe un set mic de date; ea este punctul de plecare pentru îmbunătățirile din etapele următoare (pre-antrenare, mai multe date).
 
-\textbf{Librării.} \texttt{PyTorch} (model, antrenare, optimizator Adam), \texttt{SimpleITK}, \texttt{NumPy}, \texttt{scikit-learn} (împărțirea datelor și metrici). Implementare: \texttt{software-solution/ml/variant2\_cnn3d.py}.
+\textbf{Librării.} \texttt{PyTorch} (model, antrenare, optimizator Adam), \texttt{SimpleITK}, \texttt{NumPy}, \texttt{scikit-learn} (împărțirea datelor și metrici). Implementare: \nolinkurl{software-solution/ml/variant2_cnn3d.py}.
 
 \section{Varianta 3: transfer learning cu ResNet-18 pre-antrenat pe ImageNet}
 \textbf{Algoritmul.} Din cubul fiecărui pacient se alege felia axială cu cea mai mare arie a tumorii. Felia este transformată într-o imagine RGB în care fiecare canal reprezintă o vizualizare folosită de radiolog: fereastra pulmonară ($[-1350, 150]$ HU), fereastra de țesut moale/mediastin ($[-160, 240]$ HU) și masca tumorii. Imaginea este redimensionată la $224 \times 224$ și normalizată cu media și deviația ImageNet.
@@ -331,7 +336,7 @@ Rețeaua ResNet-18 \cite{resnet}, cu ponderile pre-antrenate pe ImageNet (\textt
 
 \textbf{Motivație.} Transfer learning-ul este abordarea standard când datele etichetate sunt puține: filtrele învățate pe 1.2 milioane de imagini naturale detectează margini, texturi și forme generale, utile și pe imagini medicale. Înghețarea completă a rețelei și reducerea PCA păstrează numărul de parametri antrenabili mic (17 per biomarker).
 
-\textbf{Librării.} \texttt{PyTorch} și \texttt{torchvision} (ResNet-18 pre-antrenat), \texttt{scikit-learn} (\texttt{PCA}, \texttt{LogisticRegression}), \texttt{SimpleITK}. Implementare: \texttt{software-solution/ml/variant3\_resnet.py}.
+\textbf{Librării.} \texttt{PyTorch} și \texttt{torchvision} (ResNet-18 pre-antrenat), \texttt{scikit-learn} (\texttt{PCA}, \texttt{LogisticRegression}), \texttt{SimpleITK}. Implementare: \nolinkurl{software-solution/ml/variant3_resnet.py}.
 
 
 \chapter{Rezultate experimentale obținute}
@@ -357,7 +362,7 @@ Colecția completă are 211 pacienți și aproximativ 98~GB. Am selectat doar pa
 \end{itemize}
 
 \subsection{Analiza exploratorie a datelor (EDA)}
-Analiza este generată de scriptul \texttt{software-solution/ml/eda.py}.
+Analiza este generată de scriptul \nolinkurl{software-solution/ml/eda.py}.
 
 \textbf{Etichete.} Setul este puternic dezechilibrat (figura~\ref{fig:eda_etichete}): EGFR este mutant la 23 din 117 pacienți cu status cunoscut (19.7\%), KRAS la 27 din 115 (23.5\%), iar ALK la doar 2 pacienți. Mutațiile EGFR și KRAS sunt aproape mutual exclusive (un singur pacient le are pe ambele), ceea ce corespunde biologiei cunoscute a NSCLC.
 
