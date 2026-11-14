@@ -587,6 +587,153 @@ Cu doar 6 pacienți pozitivi per biomarker în setul de test, schimbarea predic�
 Rezultatele sunt totuși consistente cu EDA: semnalul cel mai clar pentru EGFR vine din compoziția tumorii (sticlă mată) și dimensiune, pe care varianta 1 le primește direct, în timp ce modelele care trebuie să învețe singure aceste trăsături (variantele 2 și 3) nu au suficiente exemple. Pentru evaluări mai fiabile, etapele următoare vor folosi validare încrucișată repetată pe toți cei 119 pacienți în locul unui singur set de test.
 
 
+\chapter{Algoritm inteligent pe date reale (etapa 3)}
+\label{chapter:etapa3}
+
+În această etapă am reluat experimentele din etapa 2 pe setul real \textbf{NSCLC Radiogenomics}, extins la toți pacienții utilizabili, cu un singur protocol experimental comun tuturor modelelor și cu un model nou bazat pe transfer learning de la o rețea pre-antrenată pe CT. Codul se află în \texttt{software-solution/ml/}: \texttt{prepare\_dataset.py -{}-extend}, \texttt{eda.py -{}-stage3}, \texttt{stage3.py}, \texttt{stage3\_figures.py} și \texttt{stage3\_tables.py}.
+
+\section{Setul de date}
+
+\subsection{Extinderea setului}
+NSCLC Radiogenomics \cite{bakr2018} este un set de referință (benchmark) pentru radiogenomica cancerului pulmonar, folosit de toate lucrările comparate în secțiunea~\ref{sec:s3_sota}. Colecția are 211 pacienți, dintre care 179 au statusul EGFR sau KRAS cunoscut. În etapa 2 am folosit doar cei 119 cu segmentare de expert pe CT. În etapa 3 am folosit tot setul utilizabil, adăugând pacienții pentru care NCI Imaging Data Commons publică segmentări automate ale tumorii (colecția AIMI, algoritmul BAMF-Lung-FDG-PET-CT \cite{aimi}). Aceste segmentări sunt desenate pe PET-ul unui examen PET/CT, așa că:
+\begin{enumerate}
+    \item masca tumorii („FDG-Avid Tumor”) este proiectată pe CT-ul aceluiași examen PET/CT (același sistem de coordonate);
+    \item dintre componentele conexe se păstrează cea mai mare aflată în proporție de cel puțin 50\% în plămân (segmentul „Lung” dilatat), pentru a elimina captarea fiziologică din inimă sau abdomen;
+    \item se elimină voxelii sub $-700$~HU, deoarece masca PET (voxeli de 3.6--4~mm) este mai grosieră decât CT-ul;
+    \item decuparea de $96^3$~mm la 1~mm este identică cu cea din etapa 2.
+\end{enumerate}
+Din cei 60 de pacienți etichetați fără segmentare de expert, 12 nu au nicio segmentare, 19 au o segmentare AI fără tumoră sau fără tumoră în plămân, iar 2 au fost respinși la verificarea vizuală a tuturor măștilor (figura~\ref{fig:eda3_qa}: R01-160, mască în abdomen; R01-149, mască pe țesut paravertebral). Au rămas \textbf{27 de pacienți noi}, deci setul complet are \textbf{146 de pacienți}. Datele celor 119 pacienți din etapa 2 sunt neschimbate.
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=\textwidth]{figures/eda3_qa.png}}
+    \caption{Verificarea vizuală a măștilor AI derivate din PET (felia cu aria maximă a tumorii)}
+    \label{fig:eda3_qa}
+\end{figure}
+
+Licența și aspectele etice sunt aceleași ca în etapa 2: date de-identificate de TCIA, publicate sub CC BY; segmentările AIMI sunt publicate în IDC și sunt citate \cite{aimi}.
+
+\subsection{EDA pe setul complet}
+\begin{itemize}
+    \item \textbf{Etichete} (figura~\ref{fig:eda3_etichete}): EGFR mutant la 30 din 142 de pacienți cu status cunoscut (21.1\%, față de 23 în etapa 2), KRAS mutant la 34 din 140 (24.3\%, față de 27). ALK rămâne cu doar 2 pozitivi și nu este modelat.
+    \item \textbf{Date clinice}: vârsta medie 68.0 ani (24--87), 102 bărbați și 44 de femei; adenocarcinom 126, scuamos 17. Asocierile din etapa 2 se păstrează: EGFR mutant la 46.2\% dintre nefumători față de 8.3\% dintre fumătorii activi și la 31.8\% dintre femei față de 16.3\% dintre bărbați; KRAS urmează tiparul invers (33.3\% la fumătorii activi, 14.8\% la nefumători).
+    \item \textbf{Cele două surse de măști} (figura~\ref{fig:eda3_surse}): volumul tumorii este similar (mediana 8.5~ml la expert, 9.2~ml la AI), dar CT-ul din PET/CT are felii mult mai groase (mediana 3.27~mm față de 1.25~mm). Pacienții noi aduc deci o diferență de calitate a imaginii (domain shift).
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=0.65\textwidth]{figures/eda3_etichete.png}}
+    \caption{Distribuția etichetelor pe cei 146 de pacienți ai setului complet}
+    \label{fig:eda3_etichete}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=\textwidth]{figures/eda3_surse.png}}
+    \caption{Măști de expert față de măști AI din PET: volumul tumorii, grosimea feliei CT și densitatea medie}
+    \label{fig:eda3_surse}
+\end{figure}
+
+\section{Modele}
+Am comparat cinci modele, toate cu vârsta și sexul ca intrări:
+\begin{itemize}
+    \item \textbf{Bază: vârstă + sex}, regresie logistică pe cele două variabile clinice (cerută în raportul inițial, arată cât aduce imaginea);
+    \item \textbf{V1, V2, V3}: variantele din etapa 2 (trăsături radiomice + LR, CNN 3D de la zero, ResNet-18 ImageNet 2D), cu aceleași arhitecturi;
+    \item \textbf{V4: transfer learning FMCIB} \cite{fmcib}: un ResNet-50 3D pre-antrenat auto-supervizat (SimCLR modificat) pe 11\,467 de leziuni CT din DeepLesion, deci pe date similare cu ale noastre, spre deosebire de ImageNet. Intrarea este cubul de $50^3$~mm centrat pe tumoră, normalizat ca în lucrarea originală ($[-1024, 3072]$~HU $\to [0,1]$). Rețeaua este înghețată și produce 4096 de trăsături, reduse prin PCA și clasificate cu regresie logistică (linear probing, abordarea recomandată de autori pentru seturi mici). Ponderile publice au fost încărcate integral (322 de tensori, nicio nepotrivire).
+\end{itemize}
+Din lipsă de timp de calcul (antrenare pe CPU), CNN-ul 3D (V2) nu a fost re-evaluat în acest protocol; rezultatele sale din etapa 2 rămân valabile ca referință.
+
+\section{Metodologia experimentală}
+
+\subsection{Împărțirea datelor}
+\begin{itemize}
+    \item \textbf{Set de test fix} (20\%), extras o singură dată pe setul complet, la nivel de pacient, stratificat după statusul EGFR/KRAS și sursa măștii (\texttt{random\_state=42}): 30 de pacienți (7 EGFR+, 8 KRAS+). Pentru setul etapei 2 se folosesc pacienții cu mască de expert din același test (25 de pacienți, 6 EGFR+, 6 KRAS+). Testul nu este folosit la nicio alegere.
+    \item \textbf{Antrenare}: 116 pacienți (set complet), respectiv 94 (set etapa 2). Hiperparametrii se aleg prin validare încrucișată stratificată în 5 fold-uri doar pe antrenare (\texttt{GridSearchCV}, criteriu AUC).
+    \item \textbf{Pragul de decizie} se alege tot pe antrenare, prin indicele Youden pe predicțiile out-of-fold, în locul pragului fix 0.5 din etapa 2.
+    \item \textbf{Validare încrucișată repetată}: deoarece testul are doar 6--8 pozitivi, raportăm și AUC-ul din validarea încrucișată stratificată $5 \times 5$ pe tot setul (hiperparametrii re-aleși în fiecare fold), o estimare mai stabilă.
+\end{itemize}
+
+\subsection{Metrici}
+AUC-ROC (metrica principală) cu interval de încredere 95\% prin bootstrap (2000 de re-eșantionări), acuratețe, sensibilitate, specificitate, F1 și scorul Brier (calibrarea probabilităților), per biomarker.
+
+\subsection{Hiperparametri}
+Spațiile de căutare: $C \in \{0.01, 0.1, 1\}$ pentru modelul de bază; $C \in \{0.01, 0.1, 0.5, 1, 10\}$ pentru V1; număr de componente PCA $\in \{8, 16, 32\}$ și $C \in \{0.01, 0.1, 1\}$ pentru V3 și V4. Toate folosesc regresie logistică L2 cu ponderi de clasă echilibrate și standardizare. Valorile alese sunt în tabelul~\ref{tab:s3_param}.
+
+\section{Rezultate}
+
+\input{stage3_tables.tex}
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=\textwidth]{figures/stage3_auc.png}}
+    \caption{AUC pe test (cerc, cu IÎ 95\%) și în validarea încrucișată $5\times5$ (romb), setul etapei 2 (albastru) față de setul complet (portocaliu)}
+    \label{fig:s3_auc}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=0.9\textwidth]{figures/stage3_roc.png}}
+    \caption{Curbele ROC pe setul de test complet (30 de pacienți)}
+    \label{fig:s3_roc}
+\end{figure}
+
+\subsection{Set etapa 2 față de setul complet}
+Tabelele~\ref{tab:s3_egfr} și \ref{tab:s3_kras} și figura~\ref{fig:s3_auc} compară aceleași modele pe cele două seturi:
+\begin{itemize}
+    \item \textbf{V1 (trăsături radiomice) este cel mai bun model pentru EGFR} și singurul care se îmbunătățește clar cu mai multe date: AUC în validarea încrucișată crește de la 0.61 la 0.64, iar pe test de la 0.48 la 0.60, cu sensibilitate 0.57 și specificitate 0.61.
+    \item Modelul de bază (vârstă + sex) atinge 0.55--0.58 pentru EGFR, deci imaginea aduce un câștig mic față de datele clinice.
+    \item Pentru KRAS niciun model nu depășește clar nivelul întâmplător (AUC 0.39--0.59), la fel ca în etapa 2 și ca în literatură \cite{gevaert2017}.
+    \item Transfer learning-ul FMCIB nu a funcționat pe această problemă (AUC EGFR 0.44 în CV pe setul complet). Trăsăturile sale au fost învățate pentru a distinge leziuni între ele în general, nu diferențe subtile de compoziție, iar cu 116 pacienți de antrenare un clasificator pe 4096 de trăsături este dominat de zgomot.
+\end{itemize}
+\textbf{Observație importantă:} AUC-ul de 0.72 raportat pentru V1 în etapa 2 provenea dintr-o singură împărțire norocoasă. Același model, evaluat cu protocolul nou pe aceleași date, are AUC 0.61 în validarea încrucișată. Protocolul din etapa 3 (test fix, validare încrucișată repetată, prag ales pe antrenare) oferă o estimare mai realistă.
+
+\subsection{Exemple corect și greșit prezise}
+Figura~\ref{fig:s3_exemple} arată pacienți din testul complet pentru modelul V1 (EGFR, prag 0.41):
+\begin{itemize}
+    \item \textbf{corect mutant}: R01-079 (0.78), nodul mic cu componentă de sticlă mată, și AMC-012 (0.72), nefumător, unul dintre pacienții noi cu mască AI;
+    \item \textbf{corect wildtype}: R01-069 (0.00) și R01-065 (0.01), mase mari și solide, profil tipic wildtype;
+    \item \textbf{fals pozitiv}: R01-074 (0.83), tumoră spiculată cu sticlă mată, care seamănă cu profilul EGFR;
+    \item \textbf{fals negativ}: R01-089 (0.01), masă mare, complet solidă (104~ml), pe care modelul o asociază cu wildtype. R01-003 (fumător activ, nodul de 1.5~ml, EGFR și KRAS mutant) rămâne ratat, ca în etapa 2.
+\end{itemize}
+
+\begin{figure}[htbp]
+    \centerline{\includegraphics[width=\textwidth]{figures/stage3_exemple.png}}
+    \caption{Exemple din setul de test complet, model V1 pentru EGFR (contur galben = masca tumorii)}
+    \label{fig:s3_exemple}
+\end{figure}
+
+\section{Comparație cu starea artei}
+\label{sec:s3_sota}
+
+\begin{table}[htbp]
+    \centering
+    \scriptsize
+    \begin{tabular}{p{0.24\textwidth}p{0.2\textwidth}p{0.22\textwidth}p{0.22\textwidth}}
+        \toprule
+        \textbf{Lucrare} & \textbf{Date} & \textbf{Metodă} & \textbf{Rezultat} \\
+        \midrule
+        \textbf{Acest proiect (V1)} & NSCLC Radiogenomics, 146 pacienți & 7 trăsături + vârstă/sex, LR & EGFR AUC 0.64 (CV), 0.60 (test); KRAS $\sim$0.5 \\
+        Gevaert et al. 2017 \cite{gevaert2017} & aceeași cohortă Stanford, 186 & trăsături semantice adnotate de radiologi & EGFR AUC 0.89 (test); KRAS 0.55 \\
+        Le et al. 2021 \cite{le2021} & TCIA, 161 & radiomică + XGBoost & EGFR 0.89; KRAS 0.81 \\
+        Prencipe et al. 2023 \cite{prencipe2023} & TCIA 60 + Foggia 55 & radiomică explicabilă, MLP & EGFR 0.69; KRAS 0.82 (CV 10 fold-uri) \\
+        Moreno et al. 2021 \cite{moreno2021} & TCIA & ansamblu ML + DL & KRAS 0.65--0.78 \\
+        \midrule
+        Lucrarea 3 din related work (MPR) & 332 NSCLC, multi-centric & Transformer + GoogLeNet & MPR AUC 0.92 (altă sarcină) \\
+        Lucrarea 5 din related work & LIDC-IDRI & ViT ierarhic & benign/malign AUC $>$0.90 (altă sarcină) \\
+        Lucrările 1, 2, 4, 6 din related work & CT/PET, LIDC, LUNA16 & distilare, semi-supervizat, YOLO, VGG & subtip, supraviețuire, detecție (fără biomarkeri) \\
+        \bottomrule
+    \end{tabular}
+    \caption{Comparație cu lucrările relevante}
+    \label{tab:s3_sota}
+\end{table}
+
+Lucrările din capitolul~\ref{chapter:related_work} rezolvă probleme diferite (răspuns patologic, malignitate, detecție, supraviețuire), deci cifrele lor nu sunt direct comparabile: distincția benign/malign (AUC $>$0.90) este mult mai ușoară decât predicția unei mutații. Pentru o comparație corectă am adăugat lucrări care prezic EGFR/KRAS pe același set de date (tabelul~\ref{tab:s3_sota}).
+
+Rezultatele noastre sunt sub cele publicate. Cauzele principale:
+\begin{itemize}
+    \item Gevaert et al. folosesc trăsături semantice adnotate manual de radiologi și fumatul, informație pe care aplicația noastră nu o primește (doar CT, vârstă, sex);
+    \item majoritatea lucrărilor aleg trăsăturile și modelul pe aceleași date pe care raportează AUC-ul sau folosesc o singură împărțire. Experiența noastră (0.72 în etapa 2 față de 0.61 în validarea încrucișată) arată cât de optimist poate fi un singur split cu 6 pozitivi;
+    \item KRAS este dificil și în literatură: Gevaert et al. raportează 0.55, la fel ca noi; valorile mari (0.81--0.82) provin din studii cu evaluare internă, nevalidate extern.
+\end{itemize}
+
+\section{Analiza statistică}
+Pe test, toate intervalele de încredere 95\% includ 0.5, iar pentru V1 EGFR intervalul este [0.27, 0.92]: cu 7 pozitivi, testul nu poate separa statistic modelele. Validarea încrucișată $5\times5$ este mai stabilă (deviație $\approx 0.10$--0.14 între fold-uri) și susține concluzia principală: un semnal modest pentru EGFR (V1, AUC 0.64), în principal din compoziția tumorii, și niciun semnal fiabil pentru KRAS. Creșterea setului cu 27 de pacienți (+23\%) a îmbunătățit V1 pentru EGFR, dar nu a schimbat calitativ rezultatele; o creștere reală ar necesita sute de pacienți sau date multi-centrice.
+
 \chapter{Concluzii și posibile îmbunătățiri}
 \label{chapter:concluzii}
 
@@ -622,6 +769,24 @@ Fedorov, A., Longabaugh, W. J. R., et al., \textit{National Cancer Institute Ima
 
 \bibitem{resnet}
 He, K., Zhang, X., Ren, S., Sun, J., \textit{Deep Residual Learning for Image Recognition}, CVPR (2016).
+
+\bibitem{fmcib}
+Pai, S., Bontempi, D., Hadzic, I., et al., \textit{Foundation model for cancer imaging biomarkers}, Nature Machine Intelligence 6, 354--367 (2024), ponderi: \url{https://zenodo.org/records/10528450}.
+
+\bibitem{aimi}
+Murugesan, G. K., et al., \textit{AI-generated annotations dataset for diverse cancer radiology collections in NCI Image Data Commons}, Scientific Data (2024).
+
+\bibitem{gevaert2017}
+Gevaert, O., Echegaray, S., Khuong, A., et al., \textit{Predictive radiogenomics modeling of EGFR mutation status in lung cancer}, Scientific Reports 7, 41674 (2017).
+
+\bibitem{le2021}
+Le, N. Q. K., et al., \textit{Machine Learning-Based Radiomics Signatures for EGFR and KRAS Mutations Prediction in Non-Small-Cell Lung Cancer}, International Journal of Molecular Sciences 22(17), 9254 (2021).
+
+\bibitem{prencipe2023}
+Prencipe, B., et al., \textit{An Explainable Radiogenomic Framework to Predict Mutational Status of KRAS and EGFR in Lung Adenocarcinoma Patients}, Bioengineering 10(7), 747 (2023).
+
+\bibitem{moreno2021}
+Moreno, S., et al., \textit{A Radiogenomics Ensemble to Predict EGFR and KRAS Mutations in NSCLC}, Tomography 7(2) (2021).
 
 \end{thebibliography}
 

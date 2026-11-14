@@ -1,0 +1,56 @@
+{
+  "test": {
+    "egfr": {
+      "auc": 0.5482456140350878,
+      "auc_ci95": [
+        0.20420454545454547,
+        0.8929383116883117
+      ],
+      "accuracy": 0.68,
+      "balanced_accuracy": 0.5614035087719298,
+      "sensitivity": 0.3333333333333333,
+      "specificity": 0.7894736842105263,
+      "f1": 0.3333333333333333,
+      "brier": 0.2481078470654359,
+      "threshold": 0.5067804895876927,
+      "patients": 25,
+      "positives": 6
+    },
+    "kras": {
+      "auc": 0.4444444444444445,
+      "auc_ci95": [
+        0.19526932565789473,
+        0.7084646358543418
+      ],
+      "accuracy": 0.75,
+      "balanced_accuracy": 0.5,
+      "sensitivity": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "brier": 0.24639833692662041,
+      "threshold": 0.5822421496467466,
+      "patients": 24,
+      "positives": 6
+    }
+  },
+  "repeated_cv": {
+    "egfr": {
+      "auc_mean": 0.5449766081871344,
+      "auc_std": 0.18149664716795796,
+      "folds": 25
+    },
+    "kras": {
+      "auc_mean": 0.4553333333333333,
+      "auc_std": 0.11127238276930146,
+      "folds": 25
+    }
+  },
+  "hyperparameters": {
+    "egfr": {
+      "clf__C": 0.01
+    },
+    "kras": {
+      "clf__C": 1.0
+    }
+  }
+}

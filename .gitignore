@@ -9,3 +9,4 @@ software-solution/ml/data/full/
 software-solution/ml/data/tmp/
 *.log
 *.7z
+software-solution/ml/weights/

@@ -3,8 +3,13 @@
 Writes the report figures to documentation/figures/ and prints the summary
 statistics quoted in the report.
 
-Usage: python eda.py
+With --stage3 the figures are written as eda3_*.png (the stage-2 figures are
+kept) and an extra figure compares expert masks with AI PET-derived masks.
+
+Usage: python eda.py [--stage3]
 """
+
+import argparse
 
 from pathlib import Path
 
@@ -21,6 +26,8 @@ DATA = Path(__file__).parent / "data"
 FIGURES = Path(__file__).parents[2] / "documentation" / "figures"
 STATUS = {1.0: "mutant", 0.0: "wildtype"}
 COLORS = {"mutant": "#d1495b", "wildtype": "#30638e", "necunoscut": "#bbbbbb"}
+SOURCES = {"expert": ("mască expert (CT)", "#2a78d6"), "ai_pet": ("mască AI din PET", "#eb6834")}
+PREFIX = "eda"
 
 
 def status(series: pd.Series) -> pd.Series:
@@ -43,7 +50,7 @@ def plot_labels(df: pd.DataFrame) -> None:
     ax.legend(loc="lower right", fontsize=8)
     ax.invert_yaxis()
     fig.tight_layout()
-    fig.savefig(FIGURES / "eda_etichete.png", dpi=200)
+    fig.savefig(FIGURES / f"{PREFIX}_etichete.png", dpi=200)
 
 
 def plot_clinical(df: pd.DataFrame) -> None:
@@ -61,7 +68,7 @@ def plot_clinical(df: pd.DataFrame) -> None:
     axes[1].set_xlabel("sex")
     axes[1].legend(title="EGFR", fontsize=8)
     fig.tight_layout()
-    fig.savefig(FIGURES / "eda_clinic.png", dpi=200)
+    fig.savefig(FIGURES / f"{PREFIX}_clinic.png", dpi=200)
 
 
 def tumor_stats(df: pd.DataFrame) -> pd.DataFrame:
@@ -96,7 +103,7 @@ def plot_tumor(df: pd.DataFrame) -> None:
         if log:
             ax.set_yscale("log")
     fig.tight_layout()
-    fig.savefig(FIGURES / "eda_tumora.png", dpi=200)
+    fig.savefig(FIGURES / f"{PREFIX}_tumora.png", dpi=200)
 
 
 def plot_examples(df: pd.DataFrame) -> None:
@@ -114,12 +121,66 @@ def plot_examples(df: pd.DataFrame) -> None:
         ax.set_title(f"{pid}\nEGFR {STATUS.get(row.egfr, '?')}\nKRAS {STATUS.get(row.kras, '?')}", fontsize=7)
         ax.axis("off")
     fig.tight_layout()
-    fig.savefig(FIGURES / "eda_exemple.png", dpi=200)
+    fig.savefig(FIGURES / f"{PREFIX}_exemple.png", dpi=200)
+
+
+def plot_sources(df: pd.DataFrame) -> None:
+    """How the patients added in stage 3 (AI PET masks) differ from the expert-mask ones."""
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.2))
+    specs = [("tumor_volume_ml", "volum tumoră (ml, log)", True),
+             ("spacing_z", "grosime felie CT (mm)", False),
+             ("hu_mean", "densitate medie tumoră (HU)", False)]
+    for ax, (col, title, log) in zip(axes, specs):
+        groups = [df[col][df.mask_source == k] for k in SOURCES]
+        box = ax.boxplot(groups, patch_artist=True, widths=0.6)
+        for patch, (_, color) in zip(box["boxes"], SOURCES.values()):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        ax.set_xticks(range(1, 3), [f"{n}\n(n={len(g)})" for (n, _), g in zip(SOURCES.values(), groups)],
+                      fontsize=8)
+        ax.set_title(title, fontsize=10)
+        if log:
+            ax.set_yscale("log")
+    fig.tight_layout()
+    fig.savefig(FIGURES / "eda3_surse.png", dpi=200)
+
+
+def plot_qa(df: pd.DataFrame) -> None:
+    """Every AI PET-derived mask on its largest axial slice, for visual review."""
+    ids = list(df[df.mask_source == "ai_pet"].patient_id)
+    cols = 7
+    rows = -(-len(ids) // cols)
+    fig, axes = plt.subplots(rows, cols, figsize=(2 * cols, 2.15 * rows))
+    for ax in axes.flat:
+        ax.axis("off")
+    for ax, pid in zip(axes.flat, ids):
+        ct = sitk.GetArrayFromImage(sitk.ReadImage(str(DATA / "crops" / f"{pid}_ct.nii.gz")))
+        mask = sitk.GetArrayFromImage(sitk.ReadImage(str(DATA / "crops" / f"{pid}_mask.nii.gz")))
+        z = mask.sum(axis=(1, 2)).argmax()
+        ax.imshow(np.clip(ct[z], -1350, 150), cmap="gray")
+        ax.contour(mask[z], levels=[0.5], colors="#ffcc00", linewidths=1)
+        ax.set_title(pid, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(FIGURES / "eda3_qa.png", dpi=150)
 
 
 def main() -> None:
+    global PREFIX
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--stage3", action="store_true")
+    args = parser.parse_args()
     FIGURES.mkdir(parents=True, exist_ok=True)
     df = tumor_stats(pd.read_csv(DATA / "labels.csv"))
+    if args.stage3:
+        PREFIX = "eda3"
+        plot_sources(df)
+        plot_qa(df)
+        print("mask source", df.mask_source.value_counts().to_dict())
+        for src, group in df.groupby("mask_source"):
+            print(f"  {src}: EGFR+ {int((group.egfr == 1).sum())}/{int(group.egfr.notna().sum())}, "
+                  f"KRAS+ {int((group.kras == 1).sum())}/{int(group.kras.notna().sum())}, "
+                  f"volume median {group.tumor_volume_ml.median():.1f} ml, "
+                  f"slice median {group.spacing_z.median():.2f} mm")
     plot_labels(df)
     plot_clinical(df)
     plot_tumor(df)

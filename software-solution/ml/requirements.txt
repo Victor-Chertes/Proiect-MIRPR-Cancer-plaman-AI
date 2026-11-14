@@ -1,0 +1,12 @@
+numpy
+pandas
+pyarrow
+scipy
+scikit-learn
+matplotlib
+SimpleITK
+pydicom
+idc-index
+torch
+torchvision
+monai
